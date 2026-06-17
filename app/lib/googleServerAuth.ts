@@ -45,7 +45,7 @@ export async function getGoogleAccessToken(
   const credentials = readServiceAccountCredentials();
   if (!credentials?.client_email || !credentials.private_key) {
     throw new Error(
-      "Missing Google permission. Sign in with Google or configure GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY on the server."
+      "Missing Google OAuth permission. Email/password users should submit through the Apps Script Web App at final submit; sign in with Google only for direct Drive/Sheets upload."
     );
   }
 

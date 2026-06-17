@@ -84,7 +84,10 @@ export default function SpeakingSection({
   const { data: session } = useSession();
   const { notify, visible, message, type, close } = useNotification();
 
-  const accessToken = session?.accessToken as string | undefined;
+  const accessToken =
+    session?.provider === "google" && typeof session.accessToken === "string"
+      ? session.accessToken
+      : undefined;
 
   const [questions, setQuestions] = useState<IELTSQuestionSet | null>(null);
   const [loadingQuestions, setLoadingQuestions] = useState(true);
@@ -107,9 +110,6 @@ export default function SpeakingSection({
 
   const DRIVE_FOLDER_ID = getSpeakingUploadFolderId();
   const SHEET_ID = getIeltsSheetId();
-  const APPS_SCRIPT_SUBMIT_ENABLED = Boolean(
-    process.env.NEXT_PUBLIC_GOOGLE_APPS_SCRIPT_WEB_APP_URL
-  );
 
   const chunksRef = useRef<BlobPart[]>([]);
 
@@ -218,7 +218,7 @@ export default function SpeakingSection({
 
     if (!accessToken) {
       notify(
-        "Dang dung tai khoan email/mat khau. He thong se dung quyen Google phia server neu da cau hinh.",
+        "Dang dung tai khoan email/mat khau. Audio se gui ve Apps Script khi bam ket thuc bai thi.",
         "info"
       );
     }
@@ -335,9 +335,9 @@ export default function SpeakingSection({
   };
 
   const handleUploadAndLog = async (blob: Blob, part: number) => {
-    if (!accessToken && APPS_SCRIPT_SUBMIT_ENABLED) {
+    if (!accessToken) {
       notify(
-        "Audio da luu cuc bo. Khi bam ket thuc, he thong se gui truc tiep ve Google Sheet qua Apps Script.",
+        "Audio da luu cuc bo. Khi bam ket thuc, he thong se gui audio ve server de nop bai.",
         "info"
       );
       return;
@@ -681,8 +681,8 @@ export default function SpeakingSection({
 
       {!accessToken && (
         <p className="max-w-3xl mx-auto mb-6 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
-          Bạn đang đăng nhập bằng email/mật khẩu. Hệ thống sẽ dùng quyền Google
-          phía server để upload và nộp bài nếu service account đã được cấu hình.
+          Bạn đang đăng nhập bằng email/mật khẩu. Audio sẽ được lưu tạm trên
+          trình duyệt và gửi về Apps Script khi bấm kết thúc bài thi.
         </p>
       )}
 

@@ -1,8 +1,11 @@
+export const DEFAULT_APPS_SCRIPT_WEB_APP_URL =
+  "https://script.google.com/macros/s/AKfycbzYBClvgQRh3fDnS6j5oqubYieaML7lYeuU9z4DAAciYr8rpKKfjLKBH7W1yYGQ2ePA/exec";
+
 export function getAppsScriptWebAppUrl(): string {
   return (
     process.env.GOOGLE_APPS_SCRIPT_WEB_APP_URL ||
     process.env.NEXT_PUBLIC_GOOGLE_APPS_SCRIPT_WEB_APP_URL ||
-    ""
+    DEFAULT_APPS_SCRIPT_WEB_APP_URL
   ).trim();
 }
 

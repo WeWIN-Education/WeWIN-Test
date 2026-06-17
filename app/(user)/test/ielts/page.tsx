@@ -85,7 +85,11 @@ export default function IELTSPage() {
       return;
     }
 
-    const accessToken = clientSession?.accessToken as string | undefined;
+    const accessToken =
+      clientSession?.provider === "google" &&
+      typeof clientSession.accessToken === "string"
+        ? clientSession.accessToken
+        : undefined;
     const sheetId = getIeltsSheetId();
 
     try {
@@ -106,7 +110,7 @@ export default function IELTSPage() {
         // }
       } else {
         notify(
-          "Dang nhap email/mat khau. Bai nop se dung quyen Google phia server neu service account da duoc cau hinh.",
+          "Dang nhap email/mat khau. Bai nop se gui ve Google Sheet qua Apps Script khi ket thuc bai thi.",
           "info"
         );
       }

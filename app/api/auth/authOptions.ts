@@ -173,6 +173,7 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       session.accessToken = token.accessToken as string;
       session.error = (token.error as string) ?? undefined;
+      session.provider = token.provider as "google" | "credentials" | undefined;
 
       if (session.user) {
         session.user.id = (token.userId as string) ?? undefined;

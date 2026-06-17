@@ -17,7 +17,10 @@ import { sendEmailWithPDF } from "@/app/components/sendMail";
 import { buildAdminIeltsEmailHTML } from "@/app/components/adminIeltsEmail";
 import { adminEmails } from "@/app/constants/email";
 import { getGoogleAccessToken } from "@/app/lib/googleServerAuth";
-import { submitIeltsToAppsScript } from "@/app/lib/googleAppsScriptWebhook";
+import {
+  getAppsScriptWebAppUrl,
+  submitIeltsToAppsScript,
+} from "@/app/lib/googleAppsScriptWebhook";
 
 export const runtime = "nodejs";
 
@@ -571,7 +574,7 @@ export async function POST(req: Request) {
 
     const hasUserGoogleToken = Boolean(String(accessToken || "").trim());
 
-    if (!hasUserGoogleToken && process.env.GOOGLE_APPS_SCRIPT_WEB_APP_URL) {
+    if (!hasUserGoogleToken && getAppsScriptWebAppUrl()) {
       const appScriptResult = await submitIeltsToAppsScript({
         sheetId,
         uuid,

@@ -6,6 +6,7 @@ declare module "next-auth" {
   interface Session {
     accessToken?: string;
     error?: string;
+    provider?: "google" | "credentials";
     user?: {
       id?: string;
       role?: "admin" | "user";

@@ -43,32 +43,17 @@ http://localhost:3000
 
 ## Login Rules
 
-Use Google login for real tests.
+Current preferred production flow is email/password login plus Apps Script Web App.
 
-Reason: the test submission flow needs a Google OAuth `accessToken` to:
+Reason: this avoids needing Google Cloud service accounts. The web app lets students/admins log in with simple credential accounts, then submits the whole test payload to the Apps Script Web App. Apps Script runs as the sheet owner, writes to Google Sheets, saves Speaking audio, calls OpenAI, and sends the admin email.
 
-- upload Speaking audio to Google Drive
-- write rows into Google Sheets
-- send email through Gmail, if that flow is enabled
+Google login is optional. Use it only if you want users to submit directly with their own Google OAuth token.
 
-Credentials login exists for demo/admin access. Credentials sessions do not have a personal Google access token, so real submission needs either:
-
-- Google login with an account that has Editor access, or
-- server-side service account credentials in `.env.local`.
-- the Google Sheet Apps Script deployed as a Web App.
+Server-side Google service account credentials are not required for the preferred flow.
 
 Important data rule: the Google account is used only as the permission account for Drive/Sheets. Rows written to `Speaking_list`, `Listening_list`, and `Final_list` must use the student information entered in the first IELTS form (`ielts_userInfo`), not `session.user.name` or `session.user.email` from the Google account.
 
-For email/password users to submit real tests, configure:
-
-```text
-GOOGLE_SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
-GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-```
-
-Then share both the result spreadsheet and the Speaking Drive folder with the service account email as Editor.
-
-Simpler direct-submit option:
+For email/password users to submit real tests:
 
 1. Paste the latest `Codeappscript.txt` into the Apps Script project attached to the result spreadsheet.
 2. Deploy it as a Web App.
@@ -86,6 +71,8 @@ Current configured Web App URL:
 ```text
 https://script.google.com/macros/s/AKfycbzYBClvgQRh3fDnS6j5oqubYieaML7lYeuU9z4DAAciYr8rpKKfjLKBH7W1yYGQ2ePA/exec
 ```
+
+The same URL is also embedded as the safe default in `app/lib/googleAppsScriptWebhook.ts`, so email/password submit will not fall back to the old service-account path if Vercel env is missing. Still keep the Vercel env values set so the URL can be changed without editing code.
 
 With those values set, email/password users can click `KET THUC BAI THI` and the app will submit raw test data directly to the Google Sheet through Apps Script. Speaking audio is sent as base64 at final submit, Apps Script saves it to Drive and writes the Drive links into `Speaking_list`.
 
@@ -429,13 +416,14 @@ Cambridge Test
 
 ## Quick Checklist Before A Real Test
 
-1. `.env.local` points to the correct spreadsheet ID.
-2. Google login works.
-3. Google account has Editor access to the result spreadsheet.
-4. Google account has access to the Speaking Drive folder.
-5. `Config!B1` in the Sheet has a valid OpenAI key.
-6. Admin emails are listed in `Config!A2:A`.
-7. Apps Script contains the latest `Codeappscript.txt`.
-8. Run `IELTS Evaluate -> Test OpenAI key`.
-9. Run `IELTS Evaluate -> Test admin email`.
-10. Submit one web test and check that the admin email arrives. The web-submit flow already grades Writing/Speaking and sends the email; the sheet menu is only for legacy/manual reprocessing.
+1. Vercel `NEXTAUTH_URL` is the production URL, currently `https://we-win-test.vercel.app`.
+2. Vercel has `NEXTAUTH_SECRET`.
+3. Vercel has `GOOGLE_SHEETS_ID` and `NEXT_PUBLIC_GOOGLE_SHEETS_ID`.
+4. Vercel has `GOOGLE_APPS_SCRIPT_WEB_APP_URL` and `NEXT_PUBLIC_GOOGLE_APPS_SCRIPT_WEB_APP_URL`.
+5. Apps Script contains the latest `Codeappscript.txt`.
+6. Apps Script Web App is deployed with `Execute as: Me` and access `Anyone`.
+7. `Config!B1` in the Sheet has a valid OpenAI key.
+8. Admin emails are listed in `Config!A2:A`.
+9. Run `IELTS Evaluate -> Test OpenAI key`.
+10. Run `IELTS Evaluate -> Test admin email`.
+11. Submit one web test and check that the admin email arrives. The web-submit flow already grades Writing/Speaking and sends the email; the sheet menu is only for legacy/manual reprocessing.
