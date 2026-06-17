@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>AN'S SCHOOL - Cổng Giáo Viên</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --main-dark: #006B18;
+      --main-mid: #008C20;
+      --main-light: #E8F5E9;
+      --brand-yellow: #FFF587;
+      --brand-yellow-light: #FFFBE6;
+      --warn-orange: #f5a623;
+      --warn-light: #fef3c7;
+      --danger-red: #e53e3e;
+      --danger-light: #fee2e2;
+      --success-green: #22c55e;
+      --success-light: #dcfce7;
+      --bg: #F4F7F5;
+      --card: #ffffff;
+      --text: #1A2B1C;
+      --muted: #6B7A6D;
+      --border: #CDE0D1;
+      --radius: 16px;
+      --radius-sm: 10px;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0;
+      font-family: 'Nunito', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: 0 4px 16px rgba(0,107,24,.06);
+      border: 1px solid var(--border);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .hidden { display: none !important; }
+
+    h1, h2, h3 {
+      margin: 0 0 16px;
+      color: var(--main-dark);
+      font-weight: 900;
+      letter-spacing: .5px;
+    }
+
+    .login-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+    }
+
+    .login {
+      width: 100%;
+      max-width: 420px;
+      padding: 44px 40px 36px;
+      box-shadow: 0 20px 60px rgba(0,107,24,.15);
+      border-radius: 24px;
+      border: none;
+      animation: slideUp .4s cubic-bezier(.16,1,.3,1);
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(24px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .login-logo { text-align: center; margin-bottom: 8px; }
+    .login-logo img {
+      max-width: 140px;
+      height: auto;
+      border-radius: 50%;
+      box-shadow: 0 8px 16px rgba(0,0,0,.1);
+    }
+
+    .login-subtitle {
+      text-align: center;
+      font-size: .95rem;
+      font-weight: 900;
+      color: var(--main-dark);
+      margin-bottom: 32px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .label {
+      display: block;
+      font-size: .85rem;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    input[type="text"],
+    input[type="file"],
+    select,
+    textarea,
+    button {
+      font-family: inherit;
+    }
+
+    /* Tối ưu vùng chạm cho mobile */
+    input[type="text"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 14px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      font-size: 1rem; /* Đổi thành 1rem tránh zoom tự động trên iOS */
+      background: var(--bg);
+      color: var(--text);
+      font-weight: 700;
+      outline: none;
+      transition: all .2s;
+      appearance: none; /* Reset style mặc định của mobile */
+    }
+
+    select {
+      background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23006B18' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 16px;
+      padding-right: 40px;
+    }
+
+    input[type="text"]:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--main-mid);
+      box-shadow: 0 0 0 3px rgba(0,107,24,.12);
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 48px;
+      resize: vertical;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      padding: 14px 20px;
+      cursor: pointer;
+      font-weight: 900;
+      font-size: .95rem;
+      transition: all .2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      gap: 8px;
+      min-height: 48px; /* Touch target chuẩn */
+    }
+
+    .btn-primary {
+      background: var(--main-dark);
+      color: #fff;
+      box-shadow: 0 8px 16px rgba(0,107,24,.2);
+      width: 100%;
+    }
+
+    .btn-primary:active { transform: scale(0.98); }
+
+    .btn-primary:hover {
+      background: var(--main-mid);
+      box-shadow: 0 12px 20px rgba(0,107,24,.3);
+    }
+
+    .btn-primary:disabled,
+    .btn-secondary:disabled,
+    .btn-danger:disabled {
+      opacity: .7;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: var(--main-light);
+      color: var(--main-dark);
+      width: 100%;
+    }
+
+    .btn-secondary:hover { background: var(--border); }
+
+    .btn-danger {
+      background: var(--danger-red);
+      color: #fff;
+      width: 100%;
+      box-shadow: 0 8px 16px rgba(229,62,62,.16);
+    }
+
+    .btn-danger:hover {
+      background: #c53030;
+      box-shadow: 0 12px 20px rgba(229,62,62,.22);
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .row > * { flex: 1; }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .dashboard-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .dashboard-header img {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,.1);
+      object-fit: cover;
+    }
+
+    .teacher-info h2 {
+      margin: 0 0 4px 0;
+      font-size: 1.2rem;
+    }
+
+    .teacher-info .role {
+      font-size: .85rem;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 10px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; /* Firefox */
+    }
+    .tabs::-webkit-scrollbar { display: none; } /* Chrome */
+
+    .tab-btn {
+      background: transparent;
+      padding: 10px 20px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: 800;
+      color: var(--muted);
+      font-size: .9rem;
+      transition: all .2s;
+      white-space: nowrap;
+      border: 2px solid transparent;
+    }
+
+    .tab-btn.active {
+      background: var(--main-dark);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(0,107,24,.2);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat {
+      background: var(--main-light);
+      border-radius: var(--radius-sm);
+      padding: 16px 8px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .stat .num {
+      font-size: 1.6rem;
+      font-weight: 900;
+      color: var(--main-mid);
+      margin-bottom: 4px;
+      line-height: 1;
+    }
+
+    .stat .lbl {
+      font-size: .7rem;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .stat.red { background: var(--danger-light); }
+    .stat.red .num { color: var(--danger-red); }
+
+    .stat.gold { background: var(--warn-light); }
+    .stat.gold .num { color: #d97706; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .95rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      background: var(--main-dark);
+      color: #fff;
+      font-size: .85rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      white-space: nowrap;
+    }
+
+    td {
+      font-weight: 700;
+      color: var(--text);
+      background: #fff;
+    }
+
+    td select.att-status {
+      padding: 10px 14px;
+      font-size: .9rem;
+      border-radius: 8px;
+    }
+
+    td textarea.att-note {
+      padding: 10px 14px;
+      min-height: 44px;
+      border-radius: 8px;
+      font-size: .9rem;
+    }
+
+    .msg {
+      margin-top: 14px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: .9rem;
+      font-weight: 800;
+      line-height: 1.5;
+      text-align: left;
+    }
+
+    .msg.info { background: var(--main-light); color: var(--main-mid); }
+    .msg.ok { background: var(--success-light); color: #15803d; }
+    .msg.err { background: var(--danger-light); color: var(--danger-red); }
+
+    .preview-box {
+      margin-top: 18px;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      background: var(--bg);
+      text-align: center;
+    }
+
+    .preview-box img {
+      max-width: 100%;
+      max-height: 300px;
+      border-radius: var(--radius-sm);
+      display: block;
+      margin: 0 auto 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.1);
+    }
+
+    .file-input-native {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
+    }
+
+    .file-picker {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px;
+      border: 1.5px solid var(--border);
+      border-radius: 16px;
+      background: #fff;
+      transition: all .2s;
+    }
+
+    .file-picker.has-file {
+      background: #f7fbf7;
+      border-color: #59b96e;
+    }
+
+    .file-picker-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: #dbe9dd;
+      color: var(--main-dark);
+      font-weight: 900;
+      cursor: pointer;
+      border: 1px solid #c6ddca;
+    }
+
+    .file-picker-meta {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .file-picker-name {
+      font-size: .95rem;
+      font-weight: 900;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-picker-hint {
+      font-size: .75rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 9999;
+    }
+
+    .modal-card {
+      width: 100%;
+      max-width: 400px;
+      background: #fff;
+      border-radius: 20px;
+      padding: 24px;
+      animation: slideUp .2s ease;
+    }
+
+    .modal-title { font-size: 1.2rem; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+
+    /* =========================================
+       📱 MOBILE RESPONSIVE TỐI ƯU TUYỆT ĐỐI 
+       ========================================= */
+    @media (max-width: 768px) {
+      .wrap { padding: 12px; }
+      .card { padding: 16px; margin-bottom: 16px; }
+      
+      .login { padding: 32px 24px; border-radius: 20px; }
+      
+      /* Căn chỉnh Topbar */
+      .topbar { flex-direction: column; align-items: stretch; gap: 16px; }
+      .row.topbar-actions { flex-direction: column; align-items: stretch; gap: 12px; }
+      
+      #classPickerWrap, .topbar-actions > div { width: 100%; min-width: auto; }
+      .topbar-actions .label { display: none; } /* Ẩn chữ thừa trên mobile */
+
+      /* Lưới Thống Kê */
+      .stats { 
+        grid-template-columns: repeat(2, 1fr); 
+        gap: 10px; 
+      }
+      .stats .stat:first-child { 
+        grid-column: span 2; 
+        background: var(--main-dark);
+        color: white;
+      }
+      .stats .stat:first-child .num { color: white; }
+      .stats .stat:first-child .lbl { color: rgba(255,255,255,0.8); }
+
+      /* Bẻ Table thành dạng Card List (Không cuộn ngang) */
+      .table-wrap { 
+        border: none; 
+        background: transparent; 
+        border-radius: 0; 
+        overflow: visible;
+      }
+      table, thead, tbody, th, td, tr { display: block; width: 100%; }
+      thead { display: none; } /* Ẩn header của table */
+      
+      tr {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        margin-bottom: 16px;
+        padding: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      }
+      
+      td { 
+        padding: 0; 
+        border: none; 
+        background: transparent;
+      }
+      
+      /* Row 1: Tên + Mã HS */
+      td:nth-child(1) { 
+        font-size: 1.1rem; 
+        color: var(--main-dark); 
+        display: inline-block;
+        margin-bottom: 12px;
+      }
+      td:nth-child(2) { 
+        display: inline-block; 
+        float: right;
+        background: var(--bg);
+        padding: 4px 8px;
+        border-radius: 6px;
+        margin-bottom: 12px;
+      }
+      
+      /* Row 2: Select trạng thái */
+      td:nth-child(3) { margin-bottom: 12px; }
+      
+      /* Row 3: Textarea ghi chú */
+      td:nth-child(4) { }
+      
+      td select.att-status, td textarea.att-note {
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      /* Nút điểm danh (Sticky Bottom) */
+      .attendance-actions {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #fff;
+        padding: 16px;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+        z-index: 100;
+        margin: 0 !important;
+        flex-direction: row; /* Xếp 2 nút ngang nhau nếu muốn, hoặc dọc */
+      }
+      .attendance-actions .btn { font-size: .85rem; padding: 12px; }
+      
+      /* Chừa khoảng trống dưới body để không bị thanh sticky che mất nội dung cuối */
+      body { padding-bottom: 90px; }
+
+      /* Các nút chung */
+      .row { flex-direction: column; }
+      .btn { width: 100%; }
+      .modal-actions { flex-direction: column; }
+      
+      /* File picker */
+      .file-picker { flex-direction: column; align-items: stretch; text-align: center; }
+      .file-picker-btn { width: 100%; }
+      .file-picker-name { white-space: normal; word-break: break-word; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="login-wrap" id="loginWrap">
+      <div id="loginView" class="card login">
+        <div class="login-logo">
+          <img src="https://static.kiddihub.com/1/avatar-mam-non-song-ngu-an-ans-school-xa-tan-xuan-Ni0WW0TNbZZVUUmE.jpg" alt="AN'S SCHOOL">
+        </div>
+        <div class="login-subtitle">Hệ Thống Quản Lý Lớp Học</div>
+        <div class="label">Số điện thoại giáo viên <span style="color:var(--danger-red)">*</span></div>
+        <input id="loginPhone" type="text" placeholder="Nhập số điện thoại...">
+        <div style="margin-top:20px;">
+          <button id="loginBtn" class="btn btn-primary" onclick="doLogin()">Đăng nhập</button>
+        </div>
+        <div id="loginMsg" class="msg info">Nhập số điện thoại được cấp để vào lớp.</div>
+      </div>
+    </div>
+
+    <div id="appView" class="hidden">
+      <div class="card">
+        <div class="topbar">
+          <div class="dashboard-header">
+            <img src="https://static.kiddihub.com/1/avatar-mam-non-song-ngu-an-ans-school-xa-tan-xuan-Ni0WW0TNbZZVUUmE.jpg" alt="Logo">
+            <div class="teacher-info">
+              <h2 id="teacherName">Đang tải...</h2>
+              <div id="teacherRole" class="role">...</div>
+            </div>
+          </div>
+          <div class="row topbar-actions" style="flex:0 0 auto; justify-content:flex-end;">
+            <div id="classPickerWrap" class="hidden">
+              <div class="label">Chuyển đổi lớp:</div>
+              <select id="classPicker" onchange="onChangeClass()"></select>
+            </div>
+            <div>
+              <div class="label" style="opacity:0; pointer-events:none;">Đăng xuất</div>
+              <button type="button" class="btn btn-danger" onclick="logoutTeacher()">↩️ Đăng xuất</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size: 1.1rem;">Tổng Quan Lớp Hôm Nay</h3>
+        <div id="overviewBlock" style="font-weight:700; color:var(--muted); text-align:center; padding:10px 0;">Đang tải...</div>
+      </div>
+
+      <div class="card" style="padding-bottom: 40px;">
+        <div class="tabs">
+          <button id="tabBtnAttendance" class="tab-btn active" onclick="showTab('attendance')">📋 Điểm danh học sinh</button>
+          <button id="tabBtnPhoto" class="tab-btn" onclick="showTab('photo')">📸 Đăng ảnh lớp</button>
+        </div>
+
+        <div id="attendanceTab">
+          <div id="attendanceMsg" class="msg info" style="margin-bottom:16px; margin-top:0;">Đang tải danh sách học sinh...</div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Họ tên bé</th>
+                  <th>Mã HS</th>
+                  <th style="min-width:140px;">Trạng thái</th>
+                  <th style="min-width:200px;">Ghi chú cho Phụ Huynh</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceBody"></tbody>
+            </table>
+          </div>
+          
+          <!-- Sticky Actions Bar trên Mobile -->
+          <div class="row attendance-actions" id="attendanceActions" style="margin-top:20px;">
+            <button class="btn btn-secondary" onclick="saveAttendance()">Lưu nháp</button>
+            <button class="btn btn-primary" onclick="finalizeAttendance()">✅ Chốt &amp; Gửi Phụ huynh</button>
+          </div>
+        </div>
+
+        <div id="photoTab" class="hidden">
+          <div class="label" style="font-size:.95rem;">Chọn ảnh hoạt động nổi bật hôm nay của lớp:</div>
+
+          <div id="photoPicker" class="file-picker">
+            <input
+              id="photoInput"
+              class="file-input-native"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/jpg"
+              onchange="previewPhoto(event)"
+            >
+            <label for="photoInput" class="file-picker-btn">📁 <span>Chọn ảnh</span></label>
+            <div class="file-picker-meta">
+              <div id="photoFileName" class="file-picker-name">Chưa chọn ảnh nào</div>
+              <div class="file-picker-hint">Hỗ trợ JPG, PNG, WEBP. Ảnh mới thay ảnh cũ hôm nay.</div>
+            </div>
+          </div>
+
+          <div id="photoPreview" class="preview-box hidden"></div>
+
+          <div class="row photo-actions" style="margin-top:20px;">
+            <button class="btn btn-primary" type="button" onclick="uploadPhoto()">☁️ Tải ảnh &amp; Cập nhật</button>
+            <button class="btn btn-danger" type="button" onclick="clearSelectedPhoto()">🗑️ Xóa ảnh đã chọn</button>
+          </div>
+
+          <div id="photoMsg" class="msg info">
+            Lưu ý: Ảnh tải lên tự động thay thế ảnh cũ của ngày hôm nay và đồng bộ qua Cổng Phụ Huynh.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal-backdrop hidden" onclick="onModalBackdrop(event)">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <h3 id="confirmModalTitle" class="modal-title">Xác nhận thao tác</h3>
+      <div id="confirmModalText" class="modal-text">Bạn có chắc muốn tiếp tục?</div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeConfirmModal()">Hủy</button>
+        <button type="button" class="btn btn-primary" onclick="confirmModalAction()">Xác nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbxk0xQ3peaTXWj2UmWy4_8xi2pI0zEIQWaGZfb7P576H2XYY-SrbttOIzB6_AX04QJq0Q/exec";
+
+    let teacherSession = null;
+    let currentClass = null;
+    let confirmActionCallback = null;
+
+    async function apiPost(payload) {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!result || result.status !== "success") {
+        throw new Error((result && result.message) || "Lỗi hệ thống.");
+      }
+      return result.data;
+    }
+
+    function setMsg(elId, type, html) {
+      const el = document.getElementById(elId);
+      el.className = 'msg ' + type;
+      el.innerHTML = html;
+    }
+
+    function resetLoginForm() {
+      const phoneInput = document.getElementById('loginPhone');
+      if (phoneInput) phoneInput.value = '';
+      setMsg('loginMsg', 'info', 'Nhập số điện thoại được cấp để vào lớp.');
+    }
+
+    function logoutTeacher() {
+      teacherSession = null; currentClass = null; confirmActionCallback = null;
+      document.getElementById('appView').classList.add('hidden');
+      document.getElementById('loginWrap').classList.remove('hidden');
+      document.getElementById('classPickerWrap').classList.add('hidden');
+      document.getElementById('classPicker').innerHTML = '';
+      document.getElementById('teacherName').textContent = 'Đang tải...';
+      document.getElementById('teacherRole').textContent = '...';
+      document.getElementById('overviewBlock').innerHTML = 'Đang tải...';
+      document.getElementById('attendanceBody').innerHTML = '';
+      closeConfirmModal(); clearSelectedPhoto(true); resetLoginForm();
+    }
+
+    async function doLogin() {
+      const phone = document.getElementById('loginPhone').value.trim();
+      const btn = document.getElementById('loginBtn');
+      if (!phone) { setMsg('loginMsg', 'err', 'Vui lòng nhập số điện thoại.'); return; }
+
+      btn.disabled = true; btn.textContent = 'Đang xác thực...';
+      setMsg('loginMsg', 'info', 'Đang kiểm tra tài khoản...');
+
+      try {
+        const res = await apiPost({ action: "loginTeacherByPhone", phone: phone });
+        btn.disabled = false; btn.textContent = 'Đăng nhập';
+        teacherSession = res;
+
+        document.getElementById('loginWrap').classList.add('hidden');
+        document.getElementById('appView').classList.remove('hidden');
+        document.getElementById('teacherName').textContent = res.teacherName;
+        document.getElementById('teacherRole').textContent = res.isSchoolAccount ? 'Tài khoản Trường' : 'Giáo viên - ' + res.assignedClass;
+
+        if (res.isSchoolAccount) {
+          document.getElementById('classPickerWrap').classList.remove('hidden');
+          const select = document.getElementById('classPicker');
+          select.innerHTML = res.classes.map(c => `<option value="${escapeHtml(c.className)}">${escapeHtml(c.className)}</option>`).join('');
+        }
+
+        currentClass = res.classes.find(c => c.className === res.defaultClassName) || res.classes[0];
+        if (res.isSchoolAccount) document.getElementById('classPicker').value = currentClass.className;
+        await loadClassData();
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Đăng nhập';
+        setMsg('loginMsg', 'err', 'Đăng nhập thất bại: ' + escapeHtml(readErr(err)));
+      }
+    }
+
+    function onChangeClass() {
+      const className = document.getElementById('classPicker').value;
+      currentClass = teacherSession.classes.find(c => c.className === className);
+      loadClassData();
+    }
+
+    async function loadClassData() {
+      if (!currentClass) return;
+      document.getElementById('overviewBlock').innerHTML = 'Đang đồng bộ...';
+      setMsg('attendanceMsg', 'info', 'Đang tải danh sách...');
+
+      try {
+        const [overviewRes, attendanceRes] = await Promise.all([
+          apiPost({ action: "getClassOverview", spreadsheetId: currentClass.spreadsheetId }),
+          apiPost({ action: "getAttendanceData", spreadsheetId: currentClass.spreadsheetId })
+        ]);
+        renderOverview(overviewRes);
+        renderAttendance(attendanceRes);
+      } catch (err) {
+        document.getElementById('overviewBlock').innerHTML = '<div class="msg err">Lỗi tải dữ liệu.</div>';
+        setMsg('attendanceMsg', 'err', 'Lỗi: ' + escapeHtml(readErr(err)));
+      }
+    }
+
+    function renderOverview(res) {
+      document.getElementById('overviewBlock').innerHTML = `
+        <div class="stats">
+          <div class="stat">
+            <div class="num">${res.totalStudents}</div>
+            <div class="lbl">Sĩ số lớp</div>
+          </div>
+          <div class="stat">
+            <div class="num" style="color:#16a34a;">${res.present}</div>
+            <div class="lbl">Có mặt</div>
+          </div>
+          <div class="stat red">
+            <div class="num">${res.absent}</div>
+            <div class="lbl">Vắng</div>
+          </div>
+          <div class="stat gold">
+            <div class="num">${res.late}</div>
+            <div class="lbl">Muộn</div>
+          </div>
+          <div class="stat">
+            <div class="num">${res.targetA1 || '-'}</div>
+            <div class="lbl">Ô ảnh</div>
+          </div>
+        </div>
+        <div style="margin-top:12px;color:var(--main-dark);font-weight:800;text-align:right;font-size:.85rem;">
+          📅 Lớp ${escapeHtml(res.className)} - ${escapeHtml(res.todayDisplay)}
+        </div>
+      `;
+    }
+
+    function renderAttendance(rows) {
+      const tbody = document.getElementById('attendanceBody');
+      if (!rows || !rows.length) { setMsg('attendanceMsg', 'err', 'Không tìm thấy dữ liệu.'); tbody.innerHTML = ''; return; }
+
+      tbody.innerHTML = rows.map(row => {
+        let stClass = "";
+        if (row.status === "Có mặt") stClass = "background: var(--success-light); color: #16a34a; border-color: #16a34a;";
+        else if (row.status === "Vắng") stClass = "background: var(--danger-light); color: var(--danger-red); border-color: var(--danger-red);";
+        else if (row.status === "Đi muộn") stClass = "background: var(--warn-light); color: #d97706; border-color: #d97706;";
+
+        return `
+          <tr data-name="${escapeAttr(row.name)}" data-studentid="${escapeAttr(row.studentId)}">
+            <td>${escapeHtml(row.name)}</td>
+            <td style="color:var(--muted); font-size:.8rem;">${escapeHtml(row.studentId || '')}</td>
+            <td>
+              <select class="att-status" style="${stClass}" onchange="this.style.background='var(--bg)'; this.style.color='var(--text)'; this.style.borderColor='var(--border)';">
+                <option value="" ${row.status === '' ? 'selected' : ''}>-- Chọn trạng thái --</option>
+                <option value="Có mặt" ${row.status === 'Có mặt' ? 'selected' : ''}>Có mặt</option>
+                <option value="Vắng" ${row.status === 'Vắng' ? 'selected' : ''}>Vắng mặt</option>
+                <option value="Đi muộn" ${row.status === 'Đi muộn' ? 'selected' : ''}>Đi muộn</option>
+              </select>
+            </td>
+            <td>
+              <textarea class="att-note" placeholder="Lý do vắng / biểu hiện của bé...">${escapeHtml(row.note || '')}</textarea>
+            </td>
+          </tr>
+        `;
+      }).join('');
+      setMsg('attendanceMsg', 'ok', 'Danh sách đã sẵn sàng.');
+    }
+
+    function collectAttendanceRows() {
+      return Array.from(document.querySelectorAll('#attendanceBody tr')).map(tr => ({
+        name: tr.dataset.name || '',
+        studentId: tr.dataset.studentid || '',
+        status: tr.querySelector('.att-status').value || '',
+        note: tr.querySelector('.att-note').value || ''
+      }));
+    }
+
+    async function saveAttendance() {
+      if (!currentClass) return;
+      setMsg('attendanceMsg', 'info', 'Đang lưu bản nháp...');
+      try {
+        const res = await apiPost({ action: "saveAttendanceDraft", spreadsheetId: currentClass.spreadsheetId, items: collectAttendanceRows() });
+        setMsg('attendanceMsg', 'ok', 'Đã lưu tạm ' + res.savedCount + ' học sinh.');
+        await loadClassData();
+      } catch (err) { setMsg('attendanceMsg', 'err', 'Lỗi lưu: ' + escapeHtml(readErr(err))); }
+    }
+
+    function finalizeAttendance() {
+      if (!currentClass) return;
+      openConfirmModal('Chốt điểm danh', 'Xác nhận lưu và gửi dữ liệu về tài khoản Phụ huynh?', async function() {
+        setMsg('attendanceMsg', 'info', 'Đang chốt dữ liệu...');
+        try {
+          const res = await apiPost({ action: "saveAndFinalizeAttendanceFromWeb", spreadsheetId: currentClass.spreadsheetId, items: collectAttendanceRows() });
+          setMsg('attendanceMsg', 'ok', '✅ Thành công. Đã gửi ' + res.countSuccess + ' hồ sơ.');
+          await loadClassData();
+        } catch (err) { setMsg('attendanceMsg', 'err', 'Lỗi: ' + escapeHtml(readErr(err))); }
+      });
+    }
+
+    function previewPhoto(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) { clearSelectedPhoto(true); return; }
+      document.getElementById('photoFileName').textContent = file.name;
+      document.getElementById('photoPicker').classList.add('has-file');
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const box = document.getElementById('photoPreview');
+        box.classList.remove('hidden');
+        box.innerHTML = `<img src="${e.target.result}" alt="preview"><div>📄 ${escapeHtml(file.name)}</div>`;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function clearSelectedPhoto(silent) {
+      document.getElementById('photoInput').value = '';
+      document.getElementById('photoPreview').classList.add('hidden');
+      document.getElementById('photoFileName').textContent = 'Chưa chọn ảnh nào';
+      document.getElementById('photoPicker').classList.remove('has-file');
+      if (!silent) setMsg('photoMsg', 'ok', 'Đã xóa ảnh.');
+    }
+
+    function uploadPhoto() {
+      if (!currentClass) return;
+      const file = document.getElementById('photoInput').files[0];
+      if (!file) { setMsg('photoMsg', 'err', 'Vui lòng chọn ảnh.'); return; }
+
+      setMsg('photoMsg', 'info', 'Đang tải lên và đồng bộ...');
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const res = await apiPost({
+            action: "teacherUploadDailyPhotoAndSync",
+            spreadsheetId: currentClass.spreadsheetId,
+            files: [{ name: file.name, mimeType: file.type || 'image/jpeg', base64Data: e.target.result.split(',')[1] }]
+          });
+          setMsg('photoMsg', 'ok', '✅ Tải ảnh thành công. Đã đồng bộ ' + res.syncSuccessCount + ' phụ huynh.');
+          clearSelectedPhoto(true); await loadClassData();
+        } catch (err) { setMsg('photoMsg', 'err', 'Lỗi tải ảnh: ' + escapeHtml(readErr(err))); }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function showTab(tab) {
+      document.getElementById('attendanceTab').classList.toggle('hidden', tab !== 'attendance');
+      document.getElementById('photoTab').classList.toggle('hidden', tab !== 'photo');
+      document.getElementById('tabBtnAttendance').classList.toggle('active', tab === 'attendance');
+      document.getElementById('tabBtnPhoto').classList.toggle('active', tab === 'photo');
+      
+      // Ẩn/Hiện sticky bottom bar tuỳ tab
+      document.getElementById('attendanceActions').style.display = tab === 'attendance' ? 'flex' : 'none';
+    }
+
+    function openConfirmModal(title, html, callback) {
+      document.getElementById('confirmModalTitle').textContent = title;
+      document.getElementById('confirmModalText').innerHTML = html;
+      confirmActionCallback = callback;
+      document.getElementById('confirmModal').classList.remove('hidden');
+    }
+    function closeConfirmModal() { document.getElementById('confirmModal').classList.add('hidden'); confirmActionCallback = null; }
+    function confirmModalAction() { const fn = confirmActionCallback; closeConfirmModal(); if (fn) fn(); }
+    function onModalBackdrop(e) { if (e.target.id === 'confirmModal') closeConfirmModal(); }
+    
+    function readErr(err) { return typeof err === 'string' ? err : (err?.message || 'Lỗi hệ thống'); }
+    function escapeHtml(str) { return (str || '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+    function escapeAttr(str) { return escapeHtml(str); }
+  </script>
+</body>
+</html>

@@ -1,0 +1,912 @@
+/****************************************************
+ 🎙️ WEWIN IELTS AUTO EVALUATE V7.0
+ 🧩 Nút Evaluate trên sheet Speaking_list:
+    1. Nghe audio Part 1–3 (Whisper)
+    2. Chấm điểm Speaking (GPT)
+    3. Tạo PDF báo cáo (giống mẫu Final_list)
+    4. Upload PDF lên Drive + ghi Final_list (Score, Link PDF)
+    5. Gửi PDF cho admin (cấu hình nhiều email)
+
+ 📋 CÁCH 1 — Sheet "Config" (KHUYÊN DÙNG, dán key thấy đủ trong ô):
+    A1: OPENAI_API_KEY     B1: dán TOÀN BỘ key sk-proj-... vào đây
+    A2 trở xuống: email admin (zztinszzu@gmail.com, ...)
+
+ 📋 CÁCH 2 — Script Properties (màn hình chỉ hiện ~40 ký tự — BÌNH THƯỜNG):
+    OPENAI_API_KEY, ADMIN_EMAILS, PDF_DRIVE_FOLDER_ID
+    → Dùng menu "🔑 Kiểm tra OpenAI key" để xem độ dài THẬT (vd. 164 ký tự)
+****************************************************/
+
+/************ CONFIG — đọc qua getter để trim / validate ************/
+function getOpenAIKeyFromConfigSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+  if (!sheet) return { key: '', source: '' };
+
+  const b1 = normalizeText_(sheet.getRange('B1').getValue()).replace(/^["']|["']$/g, '');
+  if (b1.indexOf('sk-') === 0) {
+    return { key: b1, source: 'sheet Config → ô B1' };
+  }
+
+  return { key: '', source: '' };
+}
+
+function getOpenAIKey_() {
+  const fromSheet = getOpenAIKeyFromConfigSheet_();
+  if (fromSheet.key) return fromSheet.key;
+
+  const raw = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY') || '';
+  const key = raw.trim().replace(/^["']|["']$/g, '');
+
+  if (!key) return '';
+
+  if (key.indexOf('sk-') === 0 && key.length < 80) {
+    throw new Error(
+      'OPENAI_API_KEY trong Script Properties chỉ lưu ' + key.length + ' ký tự (quá ngắn). ' +
+      'CÁCH DỄ NHẤT: tạo sheet "Config" → ô B1 dán key đầy đủ (ô spreadsheet không cắt key). ' +
+      'Hoặc dán lại vào Script Properties — màn hình hiện 40 ký tự là bình thường, dùng menu Kiểm tra key để xem độ dài thật.'
+    );
+  }
+
+  return key;
+}
+
+function getOpenAIKeySource_() {
+  const fromSheet = getOpenAIKeyFromConfigSheet_();
+  if (fromSheet.key) return fromSheet.source;
+  const raw = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY') || '';
+  if (normalizeText_(raw)) return 'Script Properties';
+  return '(chưa cấu hình)';
+}
+
+function maskKeyPreview_(key) {
+  if (!key || key.length < 12) return '(quá ngắn)';
+  return key.substring(0, 10) + ' ... ' + key.substring(key.length - 6);
+}
+
+function getPdfFolderId_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('PDF_DRIVE_FOLDER_ID') || '';
+  return extractDriveFolderId_(raw.trim());
+}
+
+function extractDriveFolderId_(value) {
+  const text = normalizeText_(value);
+  if (!text) return '';
+
+  if (text.indexOf('drive.google.com') !== -1) {
+    const match = text.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+    const match2 = text.match(/id=([a-zA-Z0-9_-]+)/);
+    if (match2) return match2[1];
+  }
+
+  return text;
+}
+
+const SPEAKING_SHEET_NAMES = [
+  'Speaking_list',
+  'Ielts Speaking Test LIST',
+  'IELTS Speaking Test LIST'
+];
+
+const MANAGEMENT_SHEET_NAMES = [
+  'Final_list',
+  'Ielts Test Management',
+  'IELTS Test Management'
+];
+
+const CONFIG_SHEET_NAME = 'Config';
+
+const SPEAKING_HEADER_ROW = 2;
+const MANAGEMENT_HEADER_ROW = 2;
+
+const WEWIN_LOGO = 'https://wewin.edu.vn/wp-content/uploads/2023/07/Artboard-1-copy@1x-e1690017564880.png';
+
+/****************************************************
+ MENU (tùy chọn — chạy 1 lần hoặc gán cho nút Evaluate)
+****************************************************/
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('IELTS Evaluate')
+    .addItem('▶ Chấm Speaking & gửi admin', 'generateIELTSReports')
+    .addItem('✉ Test gửi mail admin', 'testAdminEmail')
+    .addItem('🔑 Kiểm tra OpenAI key', 'testOpenAIKey')
+    .addToUi();
+}
+
+/****************************************************
+ HÀM CHẠY CHÍNH — gán cho nút Evaluate
+ (Nút cũ thường gọi generateIELTSReportsV5 — alias bên dưới)
+****************************************************/
+function generateIELTSReportsV5() {
+  generateIELTSReports();
+}
+
+function generateIELTSReports() {
+  const openaiKey = getOpenAIKey_();
+  if (!openaiKey) {
+    throw new Error('Thiếu OPENAI_API_KEY trong Script Properties');
+  }
+
+  validateOpenAIKey_();
+
+  const adminEmails = getAdminEmails_();
+  if (adminEmails.length === 0) {
+    throw new Error('Chưa cấu hình email admin. Thêm ADMIN_EMAILS = zztinszzu@gmail.com trong Script Properties');
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const speakingSheet = getSheetByPossibleNames_(ss, SPEAKING_SHEET_NAMES);
+  const managementSheet = getSheetByPossibleNames_(ss, MANAGEMENT_SHEET_NAMES);
+
+  if (!speakingSheet) throw new Error('Không tìm thấy sheet Speaking_list.');
+  if (!managementSheet) {
+    Logger.log('⚠️ Không có Final_list — vẫn chấm và gửi mail admin');
+  }
+
+  const speakingHeader = getHeader_(speakingSheet, SPEAKING_HEADER_ROW);
+
+  const idCol = findColumnIndex_(speakingHeader, 'ID');
+  const nameCol = findColumnIndex_(speakingHeader, 'Name');
+  const emailCol = findColumnIndex_(speakingHeader, 'Email');
+  const part1QCol = findColumnIndex_(speakingHeader, 'Part 1');
+  const audio1Col = findColumnIndex_(speakingHeader, 'Link Audio Part 1');
+  const part2QCol = findColumnIndex_(speakingHeader, 'Part 2');
+  const audio2Col = findColumnIndex_(speakingHeader, 'Link Audio Part 2');
+  const part3QCol = findColumnIndex_(speakingHeader, 'Part 3');
+  const audio3Col = findColumnIndex_(speakingHeader, 'Link Audio Part 3');
+  const speakingPdfCol = findColumnIndex_(speakingHeader, 'Link PDF');
+
+  assertColumnsExist_(speakingHeader, {
+    ID: idCol,
+    Name: nameCol,
+    Email: emailCol,
+    'Part 1': part1QCol,
+    'Link Audio Part 1': audio1Col,
+    'Part 2': part2QCol,
+    'Link Audio Part 2': audio2Col,
+    'Part 3': part3QCol,
+    'Link Audio Part 3': audio3Col
+  }, 'Speaking sheet');
+
+  const startRow = SPEAKING_HEADER_ROW + 1;
+  const lastRow = speakingSheet.getLastRow();
+  const numRows = lastRow - startRow + 1;
+
+  if (numRows <= 0) {
+    SpreadsheetApp.getUi().alert('Không có dữ liệu Speaking để xử lý.');
+    return;
+  }
+
+  const data = speakingSheet
+    .getRange(startRow, 1, numRows, speakingHeader.length)
+    .getValues();
+
+  let processed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const rowNumber = startRow + i;
+    const row = data[i];
+
+    const studentId = normalizeText_(row[idCol]);
+    const name = normalizeText_(row[nameCol]);
+    const email = normalizeText_(row[emailCol]);
+
+    const audios = [row[audio1Col], row[audio2Col], row[audio3Col]];
+    const questions = [row[part1QCol], row[part2QCol], row[part3QCol]];
+
+    if (!studentId && !email) continue;
+    if (!name || !email || !audios.some(function (a) { return normalizeText_(a); })) {
+      Logger.log('⏭️ Bỏ qua dòng ' + rowNumber + ' — thiếu tên, email hoặc audio');
+      skipped++;
+      continue;
+    }
+
+    const existingRecord = managementSheet
+      ? findManagementRecord_(managementSheet, studentId, email)
+      : null;
+    if (existingRecord && isAlreadyEvaluated_(existingRecord.pdfUrl)) {
+      Logger.log('⏭️ Bỏ qua ' + name + ' — đã có PDF');
+      skipped++;
+      continue;
+    }
+
+    if (speakingPdfCol !== -1) {
+      const speakingPdf = normalizeText_(row[speakingPdfCol]);
+      if (isAlreadyEvaluated_(speakingPdf)) {
+        Logger.log('⏭️ Bỏ qua ' + name + ' — Speaking_list đã có Link PDF');
+        skipped++;
+        continue;
+      }
+    }
+
+    try {
+      setSpeakingStatus_(speakingSheet, rowNumber, speakingPdfCol, '⏳ Đang đánh giá...');
+      if (managementSheet) {
+        try {
+          writeFinalListRecord_(managementSheet, studentId, name, email, '', '⏳ Đang đánh giá...');
+        } catch (sheetErr) {
+          Logger.log('⚠️ Không ghi được Final_list (đang xử lý): ' + sheetErr.message);
+        }
+      }
+      SpreadsheetApp.flush();
+
+      const transcriptsByPart = { part1: '', part2: '', part3: '' };
+      const wordStats = { part1: 0, part2: 0, part3: 0 };
+
+      for (let j = 0; j < audios.length; j++) {
+        const url = normalizeText_(audios[j]);
+        if (!url) continue;
+
+        const fileId = extractFileId(url);
+        if (!fileId) {
+          Logger.log('⚠️ Không lấy được fileId audio Part ' + (j + 1) + ' — ' + name);
+          continue;
+        }
+
+        Logger.log('🎧 Part ' + (j + 1) + ' — ' + name);
+
+        const file = DriveApp.getFileById(fileId);
+        const blob = setAudioType(file);
+        const transcription = transcribeAudio(blob);
+        const transcriptText = transcription.text ? transcription.text.trim() : '';
+
+        const partKey = 'part' + (j + 1);
+        transcriptsByPart[partKey] = transcriptText || '(No transcript available)';
+
+        wordStats[partKey] = transcriptText
+          ? transcriptText.split(/\s+/).filter(function (w) { return /\w+/.test(w); }).length
+          : 0;
+      }
+
+      const stats = {
+        totalWords: wordStats.part1 + wordStats.part2 + wordStats.part3,
+        part1: wordStats.part1,
+        part2: wordStats.part2,
+        part3: wordStats.part3
+      };
+
+      const pureTranscript = [
+        transcriptsByPart.part1,
+        transcriptsByPart.part2,
+        transcriptsByPart.part3
+      ].filter(function (t) { return t && t !== '(No transcript available)'; }).join('\n\n');
+
+      if (!pureTranscript) {
+        const message = '❌ Không có phản hồi audio';
+        setSpeakingStatus_(speakingSheet, rowNumber, speakingPdfCol, message);
+        if (managementSheet) {
+          try { writeFinalListRecord_(managementSheet, studentId, name, email, '', message); } catch (e) {}
+        }
+        failed++;
+        continue;
+      }
+
+      const analysis = analyzeIELTSWithGPT(name, email, pureTranscript, stats, questions);
+      const bandScore = extractOverallBand_(analysis);
+
+      const pdfFile = createSpeakingPdfReport_({
+        name: name,
+        email: email,
+        stats: stats,
+        transcriptsByPart: transcriptsByPart,
+        analysis: analysis
+      });
+
+      const pdfLink = pdfFile.getUrl();
+
+      // ⭐ ƯU TIÊN: gửi mail admin TRƯỚC — không phụ thuộc Final_list
+      sendAdminReportEmail_({
+        adminEmails: adminEmails,
+        studentName: name,
+        studentEmail: email,
+        bandScore: bandScore,
+        pdfBlob: pdfFile.getBlob(),
+        pdfFileName: pdfFile.getName(),
+        pdfLink: pdfLink
+      });
+
+      Logger.log('📧 Đã gửi mail admin: ' + adminEmails.join(', '));
+
+      // Ghi sheet (không chặn mail nếu lỗi)
+      try {
+        if (managementSheet) {
+          writeFinalListRecord_(managementSheet, studentId, name, email, bandScore, pdfLink);
+        }
+        setSpeakingStatus_(speakingSheet, rowNumber, speakingPdfCol, pdfLink);
+      } catch (sheetErr) {
+        Logger.log('⚠️ Ghi sheet lỗi (mail admin đã gửi): ' + sheetErr.message);
+      }
+
+      Logger.log('✅ Hoàn tất ' + name + ' — Band ' + bandScore + ' — ' + pdfLink);
+      processed++;
+
+    } catch (err) {
+      const message = formatCellMessage_('❌ ' + err.message);
+      setSpeakingStatus_(speakingSheet, rowNumber, speakingPdfCol, message);
+      if (managementSheet) {
+        try { writeFinalListRecord_(managementSheet, studentId, name, email, '', message); } catch (e) {}
+      }
+      try {
+        sendAdminErrorEmail_(adminEmails, name, email, err.message);
+      } catch (mailErr) {
+        Logger.log('⚠️ Không gửi được mail báo lỗi: ' + mailErr.message);
+      }
+      Logger.log('❌ Lỗi dòng ' + rowNumber + ': ' + err.message);
+      failed++;
+    }
+  }
+
+  const summary = 'Đã xử lý: ' + processed + '\nBỏ qua: ' + skipped + '\nLỗi: ' + failed;
+  Logger.log('✅ ' + summary);
+  SpreadsheetApp.getUi().alert('Evaluate hoàn tất\n\n' + summary);
+}
+
+/****************************************************
+ KIỂM TRA OPENAI API KEY
+****************************************************/
+function validateOpenAIKey_() {
+  const key = getOpenAIKey_();
+  const res = UrlFetchApp.fetch('https://api.openai.com/v1/models', {
+    headers: { Authorization: 'Bearer ' + key },
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() === 401) {
+    throw new Error(
+      'OpenAI từ chối API key (401). Key trả phí vẫn bị lỗi nếu: (1) dán THIẾU ký tự vào Script Properties, ' +
+      '(2) có khoảng trắng/xuống dòng thừa, (3) key đã bị revoke. ' +
+      'Copy lại TOÀN BỘ key từ platform.openai.com/api-keys.'
+    );
+  }
+
+  if (res.getResponseCode() >= 400) {
+    throw new Error('Không kết nối được OpenAI (HTTP ' + res.getResponseCode() + '). Kiểm tra key và billing.');
+  }
+}
+
+/****************************************************
+ TEST — chạy từ menu IELTS Evaluate
+****************************************************/
+function testOpenAIKey() {
+  try {
+    const key = getOpenAIKey_();
+    if (!key) {
+      SpreadsheetApp.getUi().alert(
+        'Chưa có key.\n\n' +
+        'Tạo sheet "Config":\n' +
+        '  A1 = OPENAI_API_KEY\n' +
+        '  B1 = dán key sk-proj-... (đầy đủ)\n\n' +
+        'Hoặc thêm OPENAI_API_KEY trong Script Properties.'
+      );
+      return;
+    }
+
+    validateOpenAIKey_();
+
+    SpreadsheetApp.getUi().alert(
+      '✅ OpenAI key HỢP LỆ\n\n' +
+      'Nguồn: ' + getOpenAIKeySource_() + '\n' +
+      'Độ dài thật: ' + key.length + ' ký tự\n' +
+      'Preview: ' + maskKeyPreview_(key) + '\n\n' +
+      'Lưu ý: Script Properties chỉ HIỂN thị ~40 ký tự trên màn hình — ' +
+      'đó là giao diện che bớt, không phải key bị cắt. ' +
+      'Số "Độ dài thật" mới là chuẩn.'
+    );
+  } catch (e) {
+    const key = (function () {
+      try { return getOpenAIKey_(); } catch (err) { return ''; }
+    })();
+
+    let extra = '';
+    if (key) {
+      extra = '\n\nĐộ dài key hiện tại: ' + key.length + ' ký tự';
+      if (key.length < 80) {
+        extra += '\n→ Quá ngắn! Dán key vào sheet Config ô B1.';
+      }
+    }
+
+    SpreadsheetApp.getUi().alert('❌ ' + e.message + extra);
+  }
+}
+
+function testAdminEmail() {
+  const adminEmails = getAdminEmails_();
+  if (adminEmails.length === 0) {
+    SpreadsheetApp.getUi().alert('Chưa cấu hình ADMIN_EMAILS trong Script Properties');
+    return;
+  }
+
+  MailApp.sendEmail({
+    to: adminEmails.join(','),
+    subject: '[Test] WeWIN IELTS — Admin email OK',
+    htmlBody: '<p>Email admin hoạt động. Nhận tại: <b>' + adminEmails.join(', ') + '</b></p>',
+    name: 'WeWIN IELTS Analyzer'
+  });
+
+  SpreadsheetApp.getUi().alert('✅ Đã gửi email test tới:\n' + adminEmails.join('\n'));
+}
+
+function parseOpenAIError_(responseText) {
+  try {
+    const json = JSON.parse(responseText);
+    const err = json.error || {};
+    if (err.code === 'invalid_api_key') {
+      return 'OPENAI_API_KEY không hợp lệ. Cập nhật key mới trong Script Properties.';
+    }
+    if (err.message) return String(err.message);
+  } catch (e) {
+    // ignore parse error
+  }
+  return responseText.length > 120 ? responseText.substring(0, 120) + '...' : responseText;
+}
+
+function formatCellMessage_(text) {
+  const clean = normalizeText_(text);
+  return clean.length > 200 ? clean.substring(0, 197) + '...' : clean;
+}
+
+/****************************************************
+ CẤU HÌNH EMAIL ADMIN
+****************************************************/
+function getAdminEmails_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+
+  if (configSheet) {
+    const lastRow = configSheet.getLastRow();
+    if (lastRow >= 2) {
+      const values = configSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      const fromSheet = values
+        .map(function (row) { return normalizeText_(row[0]); })
+        .filter(function (email) { return email && email.indexOf('@') !== -1; });
+
+      if (fromSheet.length > 0) return fromSheet;
+    }
+  }
+
+  const prop = PropertiesService.getScriptProperties().getProperty('ADMIN_EMAILS') || '';
+  return prop
+    .split(',')
+    .map(function (e) { return normalizeText_(e); })
+    .filter(function (e) { return e && e.indexOf('@') !== -1; });
+}
+
+/****************************************************
+ GỬI EMAIL CHO ADMIN
+****************************************************/
+function sendAdminReportEmail_(params) {
+  const htmlBody = [
+    '<div style="font-family:Arial,sans-serif;color:#1a1a1a">',
+    '<h2 style="color:#0E4BA9">IELTS Speaking Report — Admin</h2>',
+    '<p><b>Học viên:</b> ' + escapeHtml_(params.studentName) + '</p>',
+    '<p><b>Email:</b> ' + escapeHtml_(params.studentEmail) + '</p>',
+    '<p><b>Overall Band (ước tính):</b> ' + escapeHtml_(String(params.bandScore)) + '</p>',
+    params.pdfLink
+      ? '<p><b>Link Drive:</b> <a href="' + escapeHtml_(params.pdfLink) + '">' + escapeHtml_(params.pdfLink) + '</a></p>'
+      : '',
+    '<p>PDF báo cáo đính kèm email này.</p>',
+    '<p style="color:#888;font-size:12px">WeWIN IELTS Analyzer — ' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm') +
+      '</p></div>'
+  ].join('');
+
+  MailApp.sendEmail({
+    to: params.adminEmails.join(','),
+    subject: '[Admin] IELTS Speaking Report — ' + params.studentName + ' (Band ' + params.bandScore + ')',
+    htmlBody: htmlBody,
+    attachments: [params.pdfBlob.setName(params.pdfFileName)],
+    name: 'WeWIN IELTS Analyzer'
+  });
+}
+
+function sendAdminErrorEmail_(adminEmails, studentName, studentEmail, errorMessage) {
+  MailApp.sendEmail({
+    to: adminEmails.join(','),
+    subject: '[Admin] IELTS Evaluate LỖI — ' + studentName,
+    htmlBody: [
+      '<p>Chấm Speaking thất bại cho <b>' + escapeHtml_(studentName) + '</b> (' + escapeHtml_(studentEmail) + ').</p>',
+      '<p style="color:#c00">' + escapeHtml_(formatCellMessage_(errorMessage)) + '</p>',
+      '<p>Kiểm tra OPENAI_API_KEY trong Script Properties (dán đủ ~160 ký tự).</p>'
+    ].join(''),
+    name: 'WeWIN IELTS Analyzer'
+  });
+}
+
+/****************************************************
+ TẠO PDF BÁO CÁO (DocumentApp → PDF)
+****************************************************/
+function createSpeakingPdfReport_(data) {
+  const docName = 'IELTS_Speaking_' + data.name.replace(/[^\w\s-]/g, '') + '_' + Date.now();
+  const doc = DocumentApp.create(docName);
+  const body = doc.getBody();
+  body.clear();
+
+  const title = body.appendParagraph('IELTS SPEAKING');
+  title.setHeading(DocumentApp.ParagraphHeading.TITLE);
+  title.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
+  title.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(22);
+
+  const subtitle = body.appendParagraph('Assessment Report');
+  subtitle.editAsText().setForegroundColor('#0E4BA9').setFontSize(13);
+  body.appendParagraph('');
+
+  appendSectionHeader_(body, 'Candidate Information');
+  appendInfoRow_(body, 'Full Name', data.name);
+  appendInfoRow_(body, 'Email Address', data.email);
+  appendInfoRow_(body, 'Test Date', Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMMM yyyy'));
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Performance Summary');
+
+  const statsLine = body.appendParagraph(
+    'TOTAL WORDS: ' + data.stats.totalWords +
+    '    |    Part 1 words: ' + data.stats.part1 +
+    '    |    PART 2 words: ' + data.stats.part2 +
+    '    |    PART 3 words: ' + data.stats.part3
+  );
+  statsLine.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(11);
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Full Transcript');
+
+  appendTranscriptPart_(body, '1', 'Introduction and Interview', data.transcriptsByPart.part1);
+  appendTranscriptPart_(body, '2', 'Individual Long Turn', data.transcriptsByPart.part2);
+  appendTranscriptPart_(body, '3', 'Two-way Discussion', data.transcriptsByPart.part3);
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Examiner Feedback & Assessment');
+  body.appendParagraph(data.analysis || '(No feedback)');
+
+  body.appendParagraph('');
+  const footer = body.appendParagraph(
+    'WeWIN IELTS Analyzer — Report generated: ' +
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy')
+  );
+  footer.editAsText().setForegroundColor('#888888').setFontSize(9);
+
+  doc.saveAndClose();
+
+  const docFile = DriveApp.getFileById(doc.getId());
+  const pdfBlob = docFile.getAs(MimeType.PDF);
+  pdfBlob.setName('IELTS_Speaking_Report_' + data.name.replace(/[^\w\s-]/g, '') + '.pdf');
+
+  const folder = getPdfFolder_();
+  const pdfFile = folder.createFile(pdfBlob);
+  docFile.setTrashed(true);
+
+  return pdfFile;
+}
+
+function getPdfFolder_() {
+  const folderId = getPdfFolderId_();
+  if (folderId) {
+    try {
+      return DriveApp.getFolderById(folderId);
+    } catch (e) {
+      Logger.log('⚠️ PDF_DRIVE_FOLDER_ID không hợp lệ: ' + folderId + ' — dùng Drive gốc');
+    }
+  }
+  return DriveApp.getRootFolder();
+}
+
+function appendSectionHeader_(body, title) {
+  const p = body.appendParagraph(title.toUpperCase());
+  p.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(11);
+  body.appendHorizontalRule();
+}
+
+function appendInfoRow_(body, label, value) {
+  const p = body.appendParagraph(label + ': ' + (value || ''));
+  p.editAsText().setFontSize(10);
+}
+
+function appendTranscriptPart_(body, partNum, partTitle, text) {
+  const header = body.appendParagraph('Part ' + partNum + ': ' + partTitle);
+  header.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(10);
+  body.appendParagraph(text || 'No transcript available.').editAsText().setFontSize(9);
+  body.appendParagraph('');
+}
+
+/****************************************************
+ TRÍCH ĐIỂM OVERALL BAND TỪ GPT
+****************************************************/
+function extractOverallBand_(analysis) {
+  const text = normalizeText_(analysis);
+  if (!text) return 0;
+
+  const patterns = [
+    /overall\s*band\s*[:：]?\s*(\d+(?:\.\d+)?)/i,
+    /band\s*điểm\s*[:：]?\s*(\d+(?:\.\d+)?)/i,
+    /overall\s*[:：]?\s*(\d+(?:\.\d+)?)\s*\/\s*9/i,
+    /(\d+(?:\.\d+)?)\s*\/\s*9/
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+    if (match) {
+      const score = parseFloat(match[1]);
+      if (!isNaN(score) && score >= 0 && score <= 9) return score;
+    }
+  }
+
+  return 0;
+}
+
+/****************************************************
+ HỖ TRỢ SHEET / CỘT
+****************************************************/
+function getSheetByPossibleNames_(ss, names) {
+  for (let i = 0; i < names.length; i++) {
+    const sheet = ss.getSheetByName(names[i]);
+    if (sheet) return sheet;
+  }
+  return null;
+}
+
+function getHeader_(sheet, headerRow) {
+  return sheet
+    .getRange(headerRow, 1, 1, sheet.getLastColumn())
+    .getValues()[0]
+    .map(function (v) { return normalizeText_(v); });
+}
+
+function normalizeText_(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function normalizeHeader_(value) {
+  return normalizeText_(value).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function findColumnIndex_(header, columnName) {
+  const target = normalizeHeader_(columnName);
+  return header.findIndex(function (h) { return normalizeHeader_(h) === target; });
+}
+
+function assertColumnsExist_(header, columnMap, sheetLabel) {
+  const missing = [];
+  Object.keys(columnMap).forEach(function (name) {
+    if (columnMap[name] === -1) missing.push(name);
+  });
+  if (missing.length > 0) {
+    throw new Error(sheetLabel + ' thiếu cột: ' + missing.join(', '));
+  }
+}
+
+function setSpeakingStatus_(sheet, rowNumber, pdfCol, value) {
+  if (pdfCol === -1) return;
+  sheet.getRange(rowNumber, pdfCol + 1).setValue(value);
+}
+
+/****************************************************
+ GHI / CẬP NHẬT FINAL_LIST
+ Cột: ID | Name | Email | Score | Link PDF
+****************************************************/
+function findManagementRecord_(managementSheet, studentId, email) {
+  const header = getHeader_(managementSheet, MANAGEMENT_HEADER_ROW);
+
+  const idCol = findColumnIndex_(header, 'ID');
+  const nameCol = findColumnIndex_(header, 'Name');
+  const emailCol = findColumnIndex_(header, 'Email');
+  const scoreCol = findColumnIndex_(header, 'Score');
+  const pdfCol = findColumnIndex_(header, 'Link PDF');
+
+  assertColumnsExist_(header, {
+    ID: idCol,
+    Name: nameCol,
+    Email: emailCol,
+    Score: scoreCol,
+    'Link PDF': pdfCol
+  }, 'Final_list');
+
+  const startRow = MANAGEMENT_HEADER_ROW + 1;
+  const lastRow = managementSheet.getLastRow();
+  if (lastRow < startRow) return null;
+
+  const data = managementSheet
+    .getRange(startRow, 1, lastRow - startRow + 1, managementSheet.getLastColumn())
+    .getValues();
+
+  const inputId = normalizeText_(studentId);
+  const inputEmail = normalizeText_(email).toLowerCase();
+
+  for (let i = 0; i < data.length; i++) {
+    const currentId = normalizeText_(data[i][idCol]);
+    const currentEmail = normalizeText_(data[i][emailCol]).toLowerCase();
+    const matchedById = inputId && currentId && currentId === inputId;
+    const matchedByEmail = !inputId && inputEmail && currentEmail && currentEmail === inputEmail;
+
+    if (matchedById || matchedByEmail) {
+      return {
+        row: startRow + i,
+        idCol: idCol + 1,
+        nameCol: nameCol + 1,
+        emailCol: emailCol + 1,
+        scoreCol: scoreCol + 1,
+        pdfCol: pdfCol + 1,
+        pdfUrl: normalizeText_(data[i][pdfCol])
+      };
+    }
+  }
+
+  return null;
+}
+
+function writeFinalListRecord_(managementSheet, studentId, name, email, score, pdfLinkOrStatus) {
+  const header = getHeader_(managementSheet, MANAGEMENT_HEADER_ROW);
+
+  const idCol = findColumnIndex_(header, 'ID');
+  const nameCol = findColumnIndex_(header, 'Name');
+  const emailCol = findColumnIndex_(header, 'Email');
+  const scoreCol = findColumnIndex_(header, 'Score');
+  const pdfCol = findColumnIndex_(header, 'Link PDF');
+
+  assertColumnsExist_(header, {
+    ID: idCol,
+    Name: nameCol,
+    Email: emailCol,
+    Score: scoreCol,
+    'Link PDF': pdfCol
+  }, 'Final_list');
+
+  const record = findManagementRecord_(managementSheet, studentId, email);
+
+  if (record) {
+    managementSheet.getRange(record.row, record.nameCol).setValue(name);
+    managementSheet.getRange(record.row, record.emailCol).setValue(email);
+    if (score !== '' && score !== null && score !== undefined) {
+      managementSheet.getRange(record.row, record.scoreCol).setValue(score);
+    }
+    managementSheet.getRange(record.row, record.pdfCol).setValue(pdfLinkOrStatus);
+    return;
+  }
+
+  const newRow = managementSheet.getLastRow() + 1;
+  managementSheet.getRange(newRow, idCol + 1).setValue(studentId);
+  managementSheet.getRange(newRow, nameCol + 1).setValue(name);
+  managementSheet.getRange(newRow, emailCol + 1).setValue(email);
+  managementSheet.getRange(newRow, scoreCol + 1).setValue(score === '' ? 0 : score);
+  managementSheet.getRange(newRow, pdfCol + 1).setValue(pdfLinkOrStatus);
+}
+
+function isAlreadyEvaluated_(value) {
+  const text = normalizeText_(value).toLowerCase();
+  if (!text) return false;
+  if (text.indexOf('drive.google.com') !== -1) return true;
+  if (text.indexOf('docs.google.com') !== -1) return true;
+  return false;
+}
+
+/****************************************************
+ HỖ TRỢ AUDIO / DRIVE
+****************************************************/
+function extractFileId(url) {
+  const text = normalizeText_(url);
+  if (!text) return null;
+  if (text.indexOf('id=') !== -1) return text.split('id=')[1].split('&')[0];
+  if (text.indexOf('/d/') !== -1) return text.split('/d/')[1].split('/')[0];
+  return null;
+}
+
+function setAudioType(file) {
+  const blob = file.getBlob();
+  const name = file.getName().toLowerCase();
+
+  if (name.endsWith('.mp3')) return blob.setContentType('audio/mpeg');
+  if (name.endsWith('.m4a') || name.endsWith('.mp4')) return blob.setContentType('audio/mp4');
+  if (name.endsWith('.wav')) return blob.setContentType('audio/wav');
+  if (name.endsWith('.ogg')) return blob.setContentType('audio/ogg');
+  if (name.endsWith('.webm')) return blob.setContentType('audio/webm');
+
+  return blob.setContentType('audio/mp4');
+}
+
+function transcribeAudio(blob) {
+  const boundary = '----WebKitFormBoundary' + Utilities.getUuid();
+
+  const before = Utilities.newBlob(
+    '--' + boundary + '\r\n' +
+    'Content-Disposition: form-data; name="file"; filename="audio.m4a"\r\n' +
+    'Content-Type: ' + blob.getContentType() + '\r\n\r\n'
+  ).getBytes();
+
+  const after = Utilities.newBlob(
+    '\r\n--' + boundary + '\r\n' +
+    'Content-Disposition: form-data; name="model"\r\n\r\n' +
+    'whisper-1\r\n' +
+    '--' + boundary + '--\r\n'
+  ).getBytes();
+
+  const payload = before.concat(blob.getBytes()).concat(after);
+
+  const response = UrlFetchApp.fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'post',
+    headers: {
+      Authorization: 'Bearer ' + getOpenAIKey_(),
+      'Content-Type': 'multipart/form-data; boundary=' + boundary
+    },
+    payload: payload,
+    muteHttpExceptions: true
+  });
+
+  const responseText = response.getContentText();
+  const result = JSON.parse(responseText);
+
+  if (!result.text) {
+    throw new Error('Whisper: ' + parseOpenAIError_(responseText));
+  }
+
+  return result;
+}
+
+/****************************************************
+ GPT CHẤM IELTS SPEAKING
+****************************************************/
+function analyzeIELTSWithGPT(name, email, transcript, stats, questions) {
+  const partQuestions = questions
+    .map(function (q, i) {
+      return 'Part ' + (i + 1) + ': ' + (normalizeText_(q) || '(Không có câu hỏi)');
+    })
+    .join('\n');
+
+  const prompt = [
+    'Bạn là giám khảo IELTS Speaking của IDP.',
+    'Hãy đánh giá bài nói dựa trên đề bài Part 1–3, transcript và word count.',
+    '',
+    'Yêu cầu:',
+    '- Ghi điểm Fluency, Vocabulary, Grammar, Pronunciation, Coherence, Task Relevance.',
+    '- Giải thích ngắn gọn cho từng tiêu chí.',
+    '- Ghi rõ Overall Band 0–9 (ví dụ: Overall Band: 6.5).',
+    '- Gợi ý cải thiện bằng tiếng Việt.',
+    '',
+    'Học viên: ' + name + ' (' + email + ')',
+    'Tổng từ: ' + stats.totalWords,
+    'Part 1 words: ' + stats.part1,
+    'Part 2 words: ' + stats.part2,
+    'Part 3 words: ' + stats.part3,
+    '',
+    'Đề bài:',
+    partQuestions,
+    '',
+    'Transcript:',
+    transcript || '(Không có phản hồi)'
+  ].join('\n');
+
+  const response = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + getOpenAIKey_() },
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are an IELTS Speaking examiner assistant.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2
+    }),
+    muteHttpExceptions: true
+  });
+
+  const responseText = response.getContentText();
+  const result = JSON.parse(responseText);
+
+  if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+    throw new Error('GPT: ' + parseOpenAIError_(responseText));
+  }
+
+  return result.choices[0].message.content;
+}
+
+/****************************************************
+ HỖ TRỢ HTML
+****************************************************/
+function escapeHtml_(value) {
+  return normalizeText_(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

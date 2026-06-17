@@ -1,0 +1,1961 @@
+﻿/****************************************************
+  WEWIN IELTS AUTO EVALUATE
+
+  Purpose:
+  1. Grade Writing answers from Listening_list with OpenAI.
+  2. Evaluate Speaking audio from Speaking_list with Whisper + GPT.
+  3. Generate Speaking PDF, upload to Drive, email admins.
+  4. Update Final_list with Writing Band, Speaking Band, Overall Band, PDF link.
+
+  Required tabs in this spreadsheet:
+  - Config
+  - Listening_list
+  - Speaking_list
+  - Final_list
+
+  Recommended Config tab:
+  - A1: OPENAI_API_KEY
+  - B1: full OpenAI API key
+  - A2 down: admin emails
+
+  Optional Script Properties:
+  - OPENAI_API_KEY
+  - ADMIN_EMAILS
+  - PDF_DRIVE_FOLDER_ID
+****************************************************/
+
+const CONFIG_SHEET_NAME = 'Config';
+const ANSWER_SHEET_NAME = 'Answers';
+const WEWIN_LOGO_URL = 'https://wewin.edu.vn/wp-content/uploads/2023/07/Artboard-1-copy@1x-e1690017564880.png';
+
+const SPEAKING_SHEET_NAMES = [
+  'Speaking_list',
+  'Ielts Speaking Test LIST',
+  'IELTS Speaking Test LIST'
+];
+
+const LISTENING_SHEET_NAMES = [
+  'Listening_list',
+  'Ielts Listening Test LIST',
+  'IELTS Listening Test LIST'
+];
+
+const FINAL_SHEET_NAMES = [
+  'Final_list',
+  'Ielts Test Management',
+  'IELTS Test Management'
+];
+
+const HEADER_ROW = 2;
+const DATA_START_ROW = HEADER_ROW + 1;
+
+const DEFAULT_LISTENING_COLUMNS = {
+  id: 0,        // A
+  startTime: 1, // B
+  finishTime: 2,// C
+  name: 3,      // D
+  phone: 6,     // G
+  email: 7,     // H
+  consultant: 8,// I
+  ieltsNeed: 9, // J
+  selfScore: 10,// K
+  studyTime: 11,// L
+  writing: 30   // AE, based on the web append order
+};
+
+const WRITING_OUTPUT_HEADERS = [
+  'Writing AI Band',
+  'Writing AI Feedback',
+  'Writing AI Status',
+  'Writing AI Updated At'
+];
+
+const FINAL_EXTRA_HEADERS = [
+  'Writing Band',
+  'Writing Feedback',
+  'Writing Status',
+  'Speaking Band',
+  'Speaking PDF',
+  'Overall Band',
+  'Last Updated'
+];
+
+const FINAL_METADATA_HEADERS = [
+  'Phone',
+  'Consultant',
+  'IELTS Need',
+  'Self Score',
+  'Study Time',
+  'Start Time',
+  'Finish Time',
+  'Submission Source',
+  'Notes'
+];
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('IELTS Evaluate')
+    .addItem('Evaluate Writing + Speaking', 'generateIELTSReports')
+    .addItem('Evaluate Writing only', 'evaluateWritingOnly')
+    .addItem('Test OpenAI key', 'testOpenAIKey')
+    .addItem('Test admin email', 'testAdminEmail')
+    .addToUi();
+}
+
+function doPost(e) {
+  try {
+    const payload = parseWebAppPayload_(e);
+
+    validateWebhookSecret_(payload.secret);
+
+    if (payload.action === 'getFinalList') {
+      return jsonResponse_({
+        success: true,
+        records: getFinalListRecords_(payload.sheetId)
+      });
+    }
+
+    if (payload.action !== 'submitIelts') {
+      throw new Error('Unsupported action: ' + payload.action);
+    }
+
+    const result = appendIeltsWebSubmission_(payload);
+    return jsonResponse_({
+      success: true,
+      uuid: result.uuid,
+      listeningRow: result.listeningRow,
+      speakingRow: result.speakingRow,
+      finalRow: result.finalRow
+    });
+  } catch (err) {
+    Logger.log('doPost error: ' + err.message);
+    return jsonResponse_({
+      success: false,
+      error: err.message
+    });
+  }
+}
+
+function parseWebAppPayload_(e) {
+  if (!e || !e.postData || !e.postData.contents) {
+    throw new Error('Missing POST body.');
+  }
+
+  try {
+    return JSON.parse(e.postData.contents);
+  } catch (err) {
+    throw new Error('Invalid JSON POST body.');
+  }
+}
+
+function jsonResponse_(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function validateWebhookSecret_(secret) {
+  const expected = PropertiesService
+    .getScriptProperties()
+    .getProperty('IELTS_WEBHOOK_SECRET') || '';
+
+  if (expected && normalizeText_(secret) !== expected) {
+    throw new Error('Invalid webhook secret.');
+  }
+}
+
+function appendIeltsWebSubmission_(payload) {
+  const ss = getSubmissionSpreadsheet_(payload.sheetId);
+  const listeningSheet = getSheetByPossibleNames_(ss, LISTENING_SHEET_NAMES);
+  const speakingSheet = getSheetByPossibleNames_(ss, SPEAKING_SHEET_NAMES);
+  const finalSheet = getSheetByPossibleNames_(ss, FINAL_SHEET_NAMES);
+
+  if (!listeningSheet) throw new Error('Cannot find Listening_list.');
+  if (!speakingSheet) throw new Error('Cannot find Speaking_list.');
+  if (!finalSheet) throw new Error('Cannot find Final_list.');
+
+  const data = payload.data || {};
+  const uuid = normalizeText_(payload.uuid) || Utilities.getUuid();
+  const finishTime = new Date();
+  const startTime = normalizeText_(data.startTime);
+  const fullName = normalizeText_(data.fullName);
+  const birthDate = normalizeText_(data.birthDate);
+  const location = normalizeText_(data.location);
+  const phone = normalizeText_(data.phone);
+  const email = normalizeText_(data.email);
+  const consultant = normalizeText_(data.consultant);
+  const ieltsNeed = normalizeText_(data.ieltsNeed);
+  const selfScore = normalizeText_(data.selfScore);
+  const studyTime = normalizeText_(data.studyTime);
+  const listening = normalizeArray_(data.listening, 18);
+  const reading = normalizeArray_(data.reading, 13);
+  const writingAnswer = normalizeText_(data.writingAnswer);
+
+  const listeningRow = [
+    uuid,
+    startTime,
+    finishTime,
+    fullName,
+    birthDate,
+    location,
+    phone ? "'" + phone : '',
+    email,
+    consultant,
+    ieltsNeed,
+    selfScore,
+    studyTime
+  ]
+    .concat(listening)
+    .concat([writingAnswer])
+    .concat(reading);
+
+  listeningSheet.appendRow(listeningRow);
+
+  const speakingResult = appendSpeakingWebSubmission_(
+    speakingSheet,
+    uuid,
+    fullName,
+    email,
+    data.speaking || {}
+  );
+
+  const answerKey = getObjectiveAnswerKey_(ss);
+  const objectiveResult = gradeObjectiveResponses_(listening.concat(reading), answerKey);
+  const grammarReadingBand = scoreToBand_(objectiveResult.totalScore, objectiveResult.maxScore);
+
+  let writingResult = {
+    overall: 0,
+    task: 'No Writing answer was submitted.\nHọc viên chưa nộp bài Writing.',
+    coherence: '',
+    lexical: '',
+    grammar: '',
+    suggestion: 'Office should ask the student to complete Writing if this is required.\nOffice nên yêu cầu học viên hoàn thành Writing nếu phần này cần để tư vấn.'
+  };
+
+  if (writingAnswer) {
+    try {
+      writingResult = evaluateWritingWithGPT_(writingAnswer, {
+        id: uuid,
+        name: fullName,
+        email: email
+      });
+    } catch (writingErr) {
+      writingResult.suggestion = 'Writing could not evaluate this essay: ' + formatCellMessage_(writingErr.message) + '\nWriting chưa chấm được bài này: ' + formatCellMessage_(writingErr.message);
+    }
+  }
+
+  const speakingEvaluation = evaluateSpeakingForWebSubmit_({
+    student: {
+      id: uuid,
+      name: fullName,
+      email: email
+    },
+    questions: speakingResult.questions,
+    links: speakingResult.links
+  });
+
+  const overallBand = averageAvailableBands_([
+    grammarReadingBand,
+    writingResult.overall,
+    speakingEvaluation.band
+  ]);
+
+  const finalRow = writeBasicFinalRecord_(finalSheet, {
+    id: uuid,
+    name: fullName,
+    email: email,
+    score: overallBand,
+    writingBand: writingResult.overall,
+    writingFeedback: formatWritingFeedback_(writingResult),
+    writingStatus: writingResult.overall > 0 ? 'DONE' : 'ERROR_OR_PENDING',
+    speakingBand: speakingEvaluation.band || '',
+    overallBand: overallBand,
+    phone: phone,
+    consultant: consultant,
+    ieltsNeed: ieltsNeed,
+    selfScore: selfScore,
+    studyTime: studyTime,
+    startTime: startTime,
+    finishTime: finishTime,
+    source: 'apps-script-webapp'
+  });
+
+  sendAdminWebSubmitEmail_({
+    student: {
+      name: fullName,
+      email: email,
+      phone: phone,
+      birthDate: birthDate,
+      location: location,
+      consultant: consultant,
+      ieltsNeed: ieltsNeed,
+      selfScore: selfScore,
+      studyTime: studyTime
+    },
+    timestamp: finishTime,
+    objectiveResult: objectiveResult,
+    grammarReadingBand: grammarReadingBand,
+    writingResult: writingResult,
+    writingAnswer: writingAnswer,
+    speakingEvaluation: speakingEvaluation,
+    overallBand: overallBand
+  });
+
+  return {
+    uuid: uuid,
+    listeningRow: listeningSheet.getLastRow(),
+    speakingRow: speakingResult.rowNumber,
+    finalRow: finalRow
+  };
+}
+
+function getSubmissionSpreadsheet_(sheetId) {
+  const id = normalizeText_(sheetId);
+  if (id) return SpreadsheetApp.openById(id);
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getFinalListRecords_(sheetId) {
+  const ss = getSubmissionSpreadsheet_(sheetId);
+  const sheet = getSheetByPossibleNames_(ss, FINAL_SHEET_NAMES);
+  if (!sheet) throw new Error('Cannot find Final_list.');
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  if (lastRow < DATA_START_ROW) return [];
+
+  const header = sheet.getRange(HEADER_ROW, 1, 1, lastCol).getValues()[0];
+  const rows = sheet
+    .getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, lastCol)
+    .getValues();
+
+  function find(labels) {
+    for (let i = 0; i < labels.length; i++) {
+      const index = findColumnIndex_(header, labels[i]);
+      if (index !== -1) return index;
+    }
+    return -1;
+  }
+
+  function read(row, labels) {
+    const index = find(labels);
+    return index === -1 ? '' : normalizeText_(row[index]);
+  }
+
+  const records = rows.map(function (row) {
+    const score = read(row, ['Score']);
+    const overallBand = read(row, ['Overall Band']) || score;
+    return {
+      id: read(row, ['ID']),
+      name: read(row, ['Name']),
+      email: read(row, ['Email']),
+      score: score,
+      writingBand: read(row, ['Writing Band']),
+      writingStatus: read(row, ['Writing Status']),
+      speakingBand: read(row, ['Speaking Band']),
+      overallBand: overallBand,
+      lastUpdated: formatDateTime_(read(row, ['Last Updated'])),
+      phone: read(row, ['Phone']),
+      consultant: read(row, ['Consultant']),
+      ieltsNeed: read(row, ['IELTS Need']),
+      selfScore: read(row, ['Self Score']),
+      studyTime: read(row, ['Study Time']),
+      startTime: formatDateTime_(read(row, ['Start Time'])),
+      finishTime: formatDateTime_(read(row, ['Finish Time'])),
+      source: read(row, ['Submission Source']),
+      notes: read(row, ['Notes'])
+    };
+  }).filter(function (record) {
+    return record.id || record.name || record.email;
+  });
+
+  records.sort(function (a, b) {
+    const left = Date.parse(a.finishTime || a.lastUpdated || a.startTime);
+    const right = Date.parse(b.finishTime || b.lastUpdated || b.startTime);
+    if (isNaN(left) && isNaN(right)) return 0;
+    if (isNaN(left)) return 1;
+    if (isNaN(right)) return -1;
+    return right - left;
+  });
+
+  return records;
+}
+
+function writeBasicFinalRecord_(sheet, params) {
+  const headerMap = ensureFinalHeaders_(sheet);
+  const record = findFinalRecord_(sheet, params.id, params.email);
+  const rowNumber = record ? record.rowNumber : sheet.getLastRow() + 1;
+
+  sheet.getRange(rowNumber, headerMap.id + 1).setValue(params.id || '');
+  sheet.getRange(rowNumber, headerMap.name + 1).setValue(params.name || '');
+  sheet.getRange(rowNumber, headerMap.email + 1).setValue(params.email || '');
+
+  if (hasValue_(params.score)) {
+    sheet.getRange(rowNumber, headerMap.score + 1).setValue(params.score);
+  }
+
+  if (hasValue_(params.linkPdf)) {
+    sheet.getRange(rowNumber, headerMap.linkPdf + 1).setValue(params.linkPdf);
+  }
+
+  if (hasValue_(params.writingBand)) {
+    sheet.getRange(rowNumber, headerMap.writingBand + 1).setValue(params.writingBand);
+  }
+  if (hasValue_(params.writingFeedback)) {
+    sheet.getRange(rowNumber, headerMap.writingFeedback + 1).setValue(params.writingFeedback);
+  }
+  if (hasValue_(params.writingStatus)) {
+    sheet.getRange(rowNumber, headerMap.writingStatus + 1).setValue(params.writingStatus);
+  }
+  if (hasValue_(params.speakingBand)) {
+    sheet.getRange(rowNumber, headerMap.speakingBand + 1).setValue(params.speakingBand);
+  }
+  if (hasValue_(params.speakingPdf)) {
+    sheet.getRange(rowNumber, headerMap.speakingPdf + 1).setValue(params.speakingPdf);
+  }
+  if (hasValue_(params.overallBand)) {
+    sheet.getRange(rowNumber, headerMap.overallBand + 1).setValue(params.overallBand);
+  }
+
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.phone, params.phone);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.consultant, params.consultant);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.ieltsNeed, params.ieltsNeed);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.selfScore, params.selfScore);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.studyTime, params.studyTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.startTime, params.startTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.finishTime, params.finishTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.submissionSource, params.source);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.notes, params.notes);
+
+  sheet.getRange(rowNumber, headerMap.lastUpdated + 1).setValue(new Date());
+
+  return rowNumber;
+}
+
+function setFinalMetadataValue_(sheet, rowNumber, columnIndex, value) {
+  if (columnIndex === -1 || columnIndex === undefined || columnIndex === null) return;
+  if (!hasValue_(value)) return;
+  sheet.getRange(rowNumber, columnIndex + 1).setValue(value);
+}
+
+function normalizeArray_(value, length) {
+  const source = Array.isArray(value) ? value : [];
+  const output = [];
+
+  for (let i = 0; i < length; i++) {
+    output.push(normalizeText_(source[i]));
+  }
+
+  return output;
+}
+
+function appendSpeakingWebSubmission_(sheet, uuid, fullName, email, speaking) {
+  const questions = speaking.questions || {};
+  const audioBase64 = speaking.audioBase64 || {};
+  const audioLinks = Array.isArray(speaking.audioLinks) ? speaking.audioLinks : [];
+  const folderId = normalizeText_(speaking.driveFolderId);
+
+  const part1 = questions.part1 && Array.isArray(questions.part1)
+    ? questions.part1.map(function (q, i) { return (i + 1) + '. ' + q; }).join('\n')
+    : '';
+
+  const part2 = questions.part2
+    ? [
+        normalizeText_(questions.part2.topic),
+        (questions.part2.bullets || []).map(function (b) { return '- ' + b; }).join('\n'),
+        questions.part2.followUp ? 'Follow-up: ' + questions.part2.followUp : ''
+      ].filter(function (item) { return !!item; }).join('\n')
+    : '';
+
+  const part3 = questions.part3
+    ? [
+        normalizeText_(questions.part3.reading),
+        (questions.part3.questions || []).map(function (q, i) { return (i + 1) + '. ' + q; }).join('\n')
+      ].filter(function (item) { return !!item; }).join('\n\n')
+    : '';
+
+  const linkMap = {
+    1: findExistingAudioLink_(audioLinks, 1) || createAudioFileFromDataUrl_(audioBase64[1], uuid, 1, folderId),
+    2: findExistingAudioLink_(audioLinks, 2) || createAudioFileFromDataUrl_(audioBase64[2], uuid, 2, folderId),
+    3: findExistingAudioLink_(audioLinks, 3) || createAudioFileFromDataUrl_(audioBase64[3], uuid, 3, folderId)
+  };
+
+  const row = [
+    new Date(),
+    uuid,
+    fullName,
+    email,
+    part1,
+    linkMap[1],
+    part2,
+    linkMap[2],
+    part3,
+    linkMap[3]
+  ];
+
+  sheet.appendRow(row);
+
+  return {
+    rowNumber: sheet.getLastRow(),
+    links: linkMap,
+    questions: [part1, part2, part3]
+  };
+}
+
+function getObjectiveAnswerKey_(ss) {
+  const sheet = ss.getSheetByName(ANSWER_SHEET_NAME);
+  if (!sheet) return { answers: [], skills: [], points: [] };
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { answers: [], skills: [], points: [] };
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+  return {
+    answers: rows.map(function (row) { return normalizeText_(row[1]); }),
+    skills: rows.map(function (row) { return normalizeText_(row[2]) || 'Unknown'; }),
+    points: rows.map(function (row) { return Number(row[3] || 1); })
+  };
+}
+
+function gradeObjectiveResponses_(responses, answerKey) {
+  const stats = {};
+  const wrongAnswers = [];
+  const n = Math.min(responses.length, answerKey.answers.length);
+  let correctCount = 0;
+  let totalScore = 0;
+  let maxScore = 0;
+
+  for (let i = 0; i < n; i++) {
+    const user = normalizeText_(responses[i]);
+    const answer = normalizeText_(answerKey.answers[i]);
+    const skill = normalizeText_(answerKey.skills[i]) || 'Unknown';
+    const point = Number(answerKey.points[i] || 1);
+
+    if (!stats[skill]) {
+      stats[skill] = { correct: 0, totalPoint: 0, max: 0, q: 0 };
+    }
+
+    stats[skill].max += point;
+    stats[skill].q++;
+    maxScore += point;
+
+    const ok = isObjectiveAnswerCorrect_(user, answer);
+    if (ok) {
+      correctCount++;
+      totalScore += point;
+      stats[skill].correct++;
+      stats[skill].totalPoint += point;
+    } else {
+      wrongAnswers.push({
+        q: i + 1,
+        correct: answer,
+        user: user || '-',
+        skill: skill
+      });
+    }
+  }
+
+  return {
+    skillStats: stats,
+    correctCount: correctCount,
+    wrongAnswers: wrongAnswers,
+    totalScore: totalScore,
+    maxScore: maxScore,
+    totalQuestions: n
+  };
+}
+
+function isObjectiveAnswerCorrect_(user, answer) {
+  const normalize = function (value) {
+    return normalizeText_(value).toLowerCase();
+  };
+  const answerOptions = normalize(answer)
+    .split(/[,/]/)
+    .map(function (item) { return normalize(item); })
+    .filter(function (item) { return !!item; });
+
+  const userText = normalize(user);
+  if (!userText || answerOptions.length === 0) return false;
+
+  const allLetterOptions = answerOptions.every(function (item) {
+    return /^[a-e]$/.test(item);
+  });
+
+  return allLetterOptions
+    ? answerOptions.indexOf(userText.charAt(0)) !== -1
+    : answerOptions.indexOf(userText) !== -1;
+}
+
+function scoreToBand_(score, maxScore) {
+  if (!maxScore) return 0;
+  return clampBand_((Number(score || 0) / Number(maxScore)) * 9);
+}
+
+function averageAvailableBands_(bands) {
+  const valid = bands
+    .map(function (band) { return Number(band || 0); })
+    .filter(function (band) { return band > 0; });
+
+  if (valid.length === 0) return 0;
+
+  const average = valid.reduce(function (sum, band) {
+    return sum + band;
+  }, 0) / valid.length;
+
+  return clampBand_(average);
+}
+
+function evaluateSpeakingForWebSubmit_(params) {
+  const links = params.links || {};
+  const transcripts = { part1: '', part2: '', part3: '' };
+  const wordCounts = { part1: 0, part2: 0, part3: 0, total: 0 };
+  const warnings = [];
+
+  for (let part = 1; part <= 3; part++) {
+    const key = 'part' + part;
+    const link = normalizeText_(links[part]);
+
+    if (!link) {
+      warnings.push('Part ' + part + ': missing audio link.');
+      continue;
+    }
+
+    try {
+      const fileId = extractFileId_(link);
+      if (!fileId) throw new Error('Cannot extract Drive file ID.');
+
+      const file = DriveApp.getFileById(fileId);
+      const transcription = transcribeAudio_(setAudioType_(file));
+      const text = transcription.text ? transcription.text.trim() : '';
+
+      transcripts[key] = text;
+      wordCounts[key] = countWords_(text);
+      wordCounts.total += wordCounts[key];
+    } catch (err) {
+      warnings.push('Part ' + part + ': ' + err.message);
+    }
+  }
+
+  const pureTranscript = [transcripts.part1, transcripts.part2, transcripts.part3]
+    .filter(function (text) { return !!text; })
+    .join('\n\n');
+
+  if (!pureTranscript) {
+    return {
+      band: 0,
+      analysis: 'Speaking was submitted, but the audio could not be transcribed.\nHọc viên đã nộp Speaking nhưng hệ thống chưa phiên âm được audio.',
+      transcripts: transcripts,
+      wordCounts: wordCounts,
+      warnings: warnings
+    };
+  }
+
+  const analysis = analyzeSpeakingWithGPT_(
+    params.student,
+    pureTranscript,
+    wordCounts,
+    params.questions || []
+  );
+
+  return {
+    band: extractOverallBand_(analysis),
+    analysis: analysis,
+    transcripts: transcripts,
+    wordCounts: wordCounts,
+    warnings: warnings
+  };
+}
+
+function sendAdminWebSubmitEmail_(params) {
+  const adminEmails = getAdminEmails_();
+  if (!adminEmails.length) return;
+
+  const html = buildAdminWebSubmitEmailHtml_(params);
+  MailApp.sendEmail({
+    to: adminEmails.join(','),
+    subject: 'WeWIN IELTS Report - ' + params.student.name + ' - Overall ' + params.overallBand,
+    htmlBody: html,
+    name: 'WeWIN IELTS Analyzer'
+  });
+}
+
+function buildAdminWebSubmitEmailHtml_(params) {
+  const student = params.student;
+  const objective = params.objectiveResult;
+  const speaking = params.speakingEvaluation;
+  const writing = params.writingResult;
+  const skillRows = Object.keys(objective.skillStats).map(function (skill) {
+    const item = objective.skillStats[skill];
+    return '<tr>' +
+      '<td style="padding:10px;border-top:1px solid #E6ECF5">' + escapeHtml_(skill) + '</td>' +
+      '<td style="padding:10px;border-top:1px solid #E6ECF5;text-align:center">' + item.correct + '/' + item.q + '</td>' +
+      '<td style="padding:10px;border-top:1px solid #E6ECF5;text-align:center">' + item.totalPoint + '/' + item.max + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const wrongRows = objective.wrongAnswers.slice(0, 30).map(function (item) {
+    return '<tr>' +
+      '<td style="padding:8px;border-top:1px solid #F3D2D2;text-align:center;color:#B91C1C;font-weight:700">' + item.q + '</td>' +
+      '<td style="padding:8px;border-top:1px solid #F3D2D2">' + escapeHtml_(item.correct) + '</td>' +
+      '<td style="padding:8px;border-top:1px solid #F3D2D2">' + escapeHtml_(item.user) + '</td>' +
+      '<td style="padding:8px;border-top:1px solid #F3D2D2">' + escapeHtml_(item.skill) + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="4" style="padding:12px;color:#047857;font-weight:700">No wrong answers.</td></tr>';
+
+  return '<div style="margin:0;background:#EEF4FB;font-family:Arial,sans-serif;color:#14213D;padding:20px">' +
+    '<div style="max-width:920px;margin:0 auto;background:#FFFFFF;border:1px solid #DCE7F4;border-radius:14px;overflow:hidden">' +
+      '<div style="background:#0E4BA9;padding:18px 26px;color:#E4C28E">' +
+        '<img src="' + WEWIN_LOGO_URL + '" alt="WeWIN" style="width:135px;display:block;margin-bottom:10px">' +
+        '<div style="font-size:22px;font-weight:800">BAO CAO KET QUA KIEM TRA</div>' +
+        '<div style="font-size:12px;color:#F4E3C8;margin-top:4px">WeWIN IELTS Placement Test</div>' +
+      '</div>' +
+      '<div style="padding:22px 26px">' +
+        '<div style="display:flex;gap:14px;flex-wrap:wrap">' +
+          '<div style="flex:1;min-width:300px;border:1px solid #DCE7F4;border-radius:12px;padding:16px;background:#F8FBFF">' +
+            '<h3 style="margin:0 0 10px;color:#0E4BA9">Thong tin hoc vien</h3>' +
+            '<p><b>Ho ten:</b> ' + escapeHtml_(student.name) + '</p>' +
+            '<p><b>Email:</b> ' + escapeHtml_(student.email) + '</p>' +
+            '<p><b>Phone:</b> ' + escapeHtml_(student.phone) + '</p>' +
+            '<p><b>Tu van vien:</b> ' + escapeHtml_(student.consultant) + '</p>' +
+            '<p><b>Nhu cau IELTS:</b> ' + escapeHtml_(student.ieltsNeed) + '</p>' +
+            '<p><b>Thoi gian nop:</b> ' + escapeHtml_(formatDateTime_(params.timestamp)) + '</p>' +
+          '</div>' +
+          '<div style="width:260px;border:1px solid #E4C28E;border-radius:12px;padding:16px;background:#FFF8EF">' +
+            '<div style="color:#8A5A1E;font-weight:800">Overall estimate</div>' +
+            '<div style="font-size:42px;font-weight:900;color:#0E4BA9">' + params.overallBand + '</div>' +
+            '<p><b>Listening/Reading:</b> ' + params.grammarReadingBand + '</p>' +
+            '<p><b>Writing:</b> ' + writing.overall + '</p>' +
+            '<p><b>Speaking:</b> ' + (speaking.band || 'N/A') + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<h3 style="color:#0E4BA9;margin-top:22px">Listening & Reading</h3>' +
+        '<table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #DCE7F4;border-radius:10px;overflow:hidden;font-size:13px">' +
+          '<thead><tr style="background:#F3F7FF;color:#0E4BA9"><th align="left" style="padding:10px">Skill</th><th style="padding:10px">Correct</th><th style="padding:10px">Score</th></tr></thead>' +
+          '<tbody>' + skillRows + '</tbody>' +
+        '</table>' +
+        '<h3 style="color:#B91C1C;margin-top:22px">Wrong answers</h3>' +
+        '<table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #F3D2D2;border-radius:10px;overflow:hidden;font-size:13px">' +
+          '<thead><tr style="background:#FFF1F2;color:#7F1D1D"><th style="padding:8px">Q</th><th align="left" style="padding:8px">Correct</th><th align="left" style="padding:8px">Student</th><th align="left" style="padding:8px">Skill</th></tr></thead>' +
+          '<tbody>' + wrongRows + '</tbody>' +
+        '</table>' +
+        '<h3 style="color:#0E4BA9;margin-top:22px">Writing - Band ' + writing.overall + '</h3>' +
+        '<div style="line-height:1.55;font-size:14px">' +
+          '<p><b>Task:</b><br>' + htmlText_(writing.task) + '</p>' +
+          '<p><b>Coherence:</b><br>' + htmlText_(writing.coherence) + '</p>' +
+          '<p><b>Lexical:</b><br>' + htmlText_(writing.lexical) + '</p>' +
+          '<p><b>Grammar:</b><br>' + htmlText_(writing.grammar) + '</p>' +
+          '<p><b>Suggestion:</b><br>' + htmlText_(writing.suggestion) + '</p>' +
+        '</div>' +
+        '<h3 style="color:#0E4BA9;margin-top:22px">Writing answer</h3>' +
+        '<div style="line-height:1.55;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:10px;font-size:13px">' + htmlText_(params.writingAnswer) + '</div>' +
+        '<h3 style="color:#0E4BA9;margin-top:22px">Speaking - Band ' + (speaking.band || 'N/A') + '</h3>' +
+        '<div style="line-height:1.55;font-size:14px">' + htmlText_(speaking.analysis) + '</div>' +
+        (speaking.warnings.length ? '<div style="margin-top:10px;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px">' + htmlText_(speaking.warnings.join('\n')) + '</div>' : '') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function formatDateTime_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss');
+  }
+  return normalizeText_(value);
+}
+
+function findExistingAudioLink_(links, part) {
+  const match = links.find(function (item) {
+    return Number(item.part) === Number(part) && item.link;
+  });
+
+  return match ? normalizeText_(match.link) : '';
+}
+
+function createAudioFileFromDataUrl_(dataUrl, uuid, part, folderId) {
+  const raw = normalizeText_(dataUrl);
+  if (!raw) return '';
+
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return '';
+
+  const mimeType = match[1] || 'audio/webm';
+  const base64 = match[2];
+  const bytes = Utilities.base64Decode(base64);
+  const ext = audioExtensionFromMime_(mimeType);
+  const blob = Utilities.newBlob(
+    bytes,
+    mimeType,
+    'IELTS_' + uuid + '_part' + part + '.' + ext
+  );
+
+  const folder = getSpeakingUploadFolder_(folderId);
+  return folder.createFile(blob).getUrl();
+}
+
+function getSpeakingUploadFolder_(folderId) {
+  const id = extractDriveFolderId_(folderId);
+  if (id) {
+    try {
+      return DriveApp.getFolderById(id);
+    } catch (err) {
+      Logger.log('Invalid Speaking folder id: ' + id + '. Using Drive root.');
+    }
+  }
+
+  const prop = PropertiesService
+    .getScriptProperties()
+    .getProperty('SPEAKING_DRIVE_FOLDER_ID') || '';
+  const propId = extractDriveFolderId_(prop);
+
+  if (propId) {
+    try {
+      return DriveApp.getFolderById(propId);
+    } catch (err2) {
+      Logger.log('Invalid SPEAKING_DRIVE_FOLDER_ID: ' + propId + '. Using Drive root.');
+    }
+  }
+
+  return DriveApp.getRootFolder();
+}
+
+function audioExtensionFromMime_(mimeType) {
+  const clean = normalizeText_(mimeType).toLowerCase();
+  if (clean.indexOf('mp4') !== -1 || clean.indexOf('m4a') !== -1) return 'm4a';
+  if (clean.indexOf('mpeg') !== -1 || clean.indexOf('mp3') !== -1) return 'mp3';
+  if (clean.indexOf('wav') !== -1) return 'wav';
+  if (clean.indexOf('ogg') !== -1) return 'ogg';
+  return 'webm';
+}
+
+function generateIELTSReportsV5() {
+  generateIELTSReports();
+}
+
+function generateIELTSReports() {
+  validateOpenAIKey_();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const speakingSheet = getSheetByPossibleNames_(ss, SPEAKING_SHEET_NAMES);
+  const listeningSheet = getSheetByPossibleNames_(ss, LISTENING_SHEET_NAMES);
+  const finalSheet = getSheetByPossibleNames_(ss, FINAL_SHEET_NAMES);
+
+  if (!speakingSheet && !listeningSheet) {
+    throw new Error('Cannot find Speaking_list or Listening_list.');
+  }
+  if (!finalSheet) {
+    throw new Error('Cannot find Final_list.');
+  }
+
+  ensureFinalHeaders_(finalSheet);
+
+  const writingSummary = listeningSheet
+    ? processWritingRows_(listeningSheet, finalSheet, false)
+    : { processed: 0, skipped: 0, failed: 0 };
+
+  const speakingSummary = speakingSheet
+    ? processSpeakingRows_(speakingSheet, listeningSheet, finalSheet)
+    : { processed: 0, skipped: 0, failed: 0 };
+
+  const summary =
+    'Writing processed: ' + writingSummary.processed +
+    '\nWriting skipped: ' + writingSummary.skipped +
+    '\nWriting failed: ' + writingSummary.failed +
+    '\n\nSpeaking processed: ' + speakingSummary.processed +
+    '\nSpeaking skipped: ' + speakingSummary.skipped +
+    '\nSpeaking failed: ' + speakingSummary.failed;
+
+  Logger.log(summary);
+  SpreadsheetApp.getUi().alert('Evaluate completed\n\n' + summary);
+}
+
+function evaluateWritingOnly() {
+  validateOpenAIKey_();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const listeningSheet = getSheetByPossibleNames_(ss, LISTENING_SHEET_NAMES);
+  const finalSheet = getSheetByPossibleNames_(ss, FINAL_SHEET_NAMES);
+
+  if (!listeningSheet) throw new Error('Cannot find Listening_list.');
+  if (!finalSheet) throw new Error('Cannot find Final_list.');
+
+  ensureFinalHeaders_(finalSheet);
+  const summary = processWritingRows_(listeningSheet, finalSheet, true);
+
+  SpreadsheetApp.getUi().alert(
+    'Writing evaluation completed\n\n' +
+      'Processed: ' + summary.processed +
+      '\nSkipped: ' + summary.skipped +
+      '\nFailed: ' + summary.failed
+  );
+}
+
+function processWritingRows_(listeningSheet, finalSheet, force) {
+  const cols = getListeningColumns_(listeningSheet);
+  const outputCols = ensureWritingOutputColumns_(listeningSheet);
+
+  const lastRow = listeningSheet.getLastRow();
+  if (lastRow < DATA_START_ROW) {
+    return { processed: 0, skipped: 0, failed: 0 };
+  }
+
+  const lastCol = Math.max(listeningSheet.getLastColumn(), outputCols.updatedAt + 1);
+  const rows = listeningSheet
+    .getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, lastCol)
+    .getValues();
+
+  let processed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const rowNumber = DATA_START_ROW + i;
+    const row = rows[i];
+
+    const student = {
+      id: normalizeText_(row[cols.id]),
+      name: normalizeText_(row[cols.name]),
+      email: normalizeText_(row[cols.email]),
+      phone: normalizeText_(row[cols.phone]),
+      consultant: normalizeText_(row[cols.consultant]),
+      ieltsNeed: normalizeText_(row[cols.ieltsNeed]),
+      selfScore: normalizeText_(row[cols.selfScore]),
+      studyTime: normalizeText_(row[cols.studyTime]),
+      startTime: normalizeText_(row[cols.startTime]),
+      finishTime: normalizeText_(row[cols.finishTime])
+    };
+
+    const essay = normalizeText_(row[cols.writing]);
+    const status = normalizeText_(row[outputCols.status]);
+
+    if (!student.id && !student.email) {
+      skipped++;
+      continue;
+    }
+
+    if (!essay) {
+      setWritingStatus_(listeningSheet, rowNumber, outputCols, '', '', 'NO_WRITING_ANSWER');
+      skipped++;
+      continue;
+    }
+
+    if (!force && isWritingDone_(status)) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      setWritingStatus_(listeningSheet, rowNumber, outputCols, '', '', 'PROCESSING');
+      SpreadsheetApp.flush();
+
+      const result = evaluateWritingWithGPT_(essay, student);
+      const feedback = formatWritingFeedback_(result);
+
+      setWritingStatus_(
+        listeningSheet,
+        rowNumber,
+        outputCols,
+        result.overall,
+        feedback,
+        'DONE'
+      );
+
+      writeFinalListRecord_(finalSheet, {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        writingBand: result.overall,
+        writingFeedback: feedback,
+        writingStatus: 'DONE',
+        phone: student.phone,
+        consultant: student.consultant,
+        ieltsNeed: student.ieltsNeed,
+        selfScore: student.selfScore,
+        studyTime: student.studyTime,
+        startTime: student.startTime,
+        finishTime: student.finishTime,
+        source: 'apps-script-evaluate'
+      });
+
+      processed++;
+    } catch (err) {
+      setWritingStatus_(
+        listeningSheet,
+        rowNumber,
+        outputCols,
+        '',
+        formatCellMessage_(err.message),
+        'ERROR'
+      );
+      Logger.log('Writing error row ' + rowNumber + ': ' + err.message);
+      failed++;
+    }
+  }
+
+  return { processed: processed, skipped: skipped, failed: failed };
+}
+
+function processSpeakingRows_(speakingSheet, listeningSheet, finalSheet) {
+  const header = getHeader_(speakingSheet, HEADER_ROW);
+
+  const cols = {
+    id: requiredColumn_(header, 'ID', 'Speaking_list'),
+    name: requiredColumn_(header, 'Name', 'Speaking_list'),
+    email: requiredColumn_(header, 'Email', 'Speaking_list'),
+    part1: requiredColumn_(header, 'Part 1', 'Speaking_list'),
+    link1: requiredColumn_(header, 'Link Audio Part 1', 'Speaking_list'),
+    part2: requiredColumn_(header, 'Part 2', 'Speaking_list'),
+    link2: requiredColumn_(header, 'Link Audio Part 2', 'Speaking_list'),
+    part3: requiredColumn_(header, 'Part 3', 'Speaking_list'),
+    link3: requiredColumn_(header, 'Link Audio Part 3', 'Speaking_list'),
+    pdf: findColumnIndex_(header, 'Link PDF')
+  };
+
+  if (cols.pdf === -1) {
+    cols.pdf = ensureColumns_(speakingSheet, HEADER_ROW, ['Link PDF']).linkPdf;
+  }
+
+  const lastRow = speakingSheet.getLastRow();
+  if (lastRow < DATA_START_ROW) {
+    return { processed: 0, skipped: 0, failed: 0 };
+  }
+
+  const data = speakingSheet
+    .getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, speakingSheet.getLastColumn())
+    .getValues();
+
+  let processed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const adminEmails = getAdminEmails_();
+
+  for (let i = 0; i < data.length; i++) {
+    const rowNumber = DATA_START_ROW + i;
+    const row = data[i];
+
+    const student = {
+      id: normalizeText_(row[cols.id]),
+      name: normalizeText_(row[cols.name]),
+      email: normalizeText_(row[cols.email])
+    };
+
+    const questions = [
+      normalizeText_(row[cols.part1]),
+      normalizeText_(row[cols.part2]),
+      normalizeText_(row[cols.part3])
+    ];
+
+    const audios = [
+      normalizeText_(row[cols.link1]),
+      normalizeText_(row[cols.link2]),
+      normalizeText_(row[cols.link3])
+    ];
+
+    if (!student.id && !student.email) {
+      skipped++;
+      continue;
+    }
+
+    if (!student.name || !student.email || !audios.some(function (url) { return !!url; })) {
+      setSpeakingStatus_(speakingSheet, rowNumber, cols.pdf, 'NO_AUDIO_OR_STUDENT_INFO');
+      skipped++;
+      continue;
+    }
+
+    const existingPdf = normalizeText_(row[cols.pdf]);
+    if (isAlreadyEvaluated_(existingPdf)) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      setSpeakingStatus_(speakingSheet, rowNumber, cols.pdf, 'PROCESSING');
+      SpreadsheetApp.flush();
+
+      const transcriptsByPart = { part1: '', part2: '', part3: '' };
+      const wordStats = { part1: 0, part2: 0, part3: 0 };
+
+      for (let partIndex = 0; partIndex < audios.length; partIndex++) {
+        const url = audios[partIndex];
+        if (!url) continue;
+
+        const fileId = extractFileId_(url);
+        if (!fileId) {
+          Logger.log('Cannot extract audio fileId for row ' + rowNumber + ', part ' + (partIndex + 1));
+          continue;
+        }
+
+        const file = DriveApp.getFileById(fileId);
+        const blob = setAudioType_(file);
+        const transcription = transcribeAudio_(blob);
+        const transcriptText = transcription.text ? transcription.text.trim() : '';
+
+        const key = 'part' + (partIndex + 1);
+        transcriptsByPart[key] = transcriptText || '(No transcript available)';
+        wordStats[key] = countWords_(transcriptText);
+      }
+
+      const pureTranscript = [
+        transcriptsByPart.part1,
+        transcriptsByPart.part2,
+        transcriptsByPart.part3
+      ]
+        .filter(function (text) {
+          return text && text !== '(No transcript available)';
+        })
+        .join('\n\n');
+
+      if (!pureTranscript) {
+        setSpeakingStatus_(speakingSheet, rowNumber, cols.pdf, 'NO_TRANSCRIPT');
+        failed++;
+        continue;
+      }
+
+      const stats = {
+        totalWords: wordStats.part1 + wordStats.part2 + wordStats.part3,
+        part1: wordStats.part1,
+        part2: wordStats.part2,
+        part3: wordStats.part3
+      };
+
+      const analysis = analyzeSpeakingWithGPT_(student, pureTranscript, stats, questions);
+      const speakingBand = extractOverallBand_(analysis);
+
+      const pdfFile = createSpeakingPdfReport_({
+        name: student.name,
+        email: student.email,
+        stats: stats,
+        transcriptsByPart: transcriptsByPart,
+        analysis: analysis
+      });
+
+      const pdfLink = pdfFile.getUrl();
+
+      writeFinalListRecord_(finalSheet, {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        speakingBand: speakingBand,
+        speakingPdf: pdfLink,
+        linkPdf: pdfLink
+      });
+
+      setSpeakingStatus_(speakingSheet, rowNumber, cols.pdf, pdfLink);
+
+      const writingSnapshot = findFinalRecord_(finalSheet, student.id, student.email);
+      sendAdminReportEmail_({
+        adminEmails: adminEmails,
+        studentName: student.name,
+        studentEmail: student.email,
+        speakingBand: speakingBand,
+        writingBand: writingSnapshot ? writingSnapshot.writingBand : '',
+        pdfBlob: pdfFile.getBlob(),
+        pdfFileName: pdfFile.getName(),
+        pdfLink: pdfLink
+      });
+
+      processed++;
+    } catch (err) {
+      const message = formatCellMessage_(err.message);
+      setSpeakingStatus_(speakingSheet, rowNumber, cols.pdf, 'ERROR: ' + message);
+      writeFinalListRecord_(finalSheet, {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        speakingPdf: 'ERROR: ' + message
+      });
+      try {
+        sendAdminErrorEmail_(adminEmails, student.name, student.email, message);
+      } catch (mailErr) {
+        Logger.log('Cannot send error email: ' + mailErr.message);
+      }
+      Logger.log('Speaking error row ' + rowNumber + ': ' + err.message);
+      failed++;
+    }
+  }
+
+  return { processed: processed, skipped: skipped, failed: failed };
+}
+
+function evaluateWritingWithGPT_(essay, student) {
+  const prompt = [
+    'You are a certified IELTS Writing examiner.',
+    'Evaluate this IELTS Writing response using IELTS band descriptors.',
+    'For every text field, write exactly two language blocks.',
+    'Line 1 must be English feedback. Line 2 must be Vietnamese feedback with the same meaning.',
+    'Do not use markdown, bullets, numbering, or labels like English:/Vietnamese:.',
+    'Return ONLY valid JSON with this exact shape:',
+    '{',
+    '  "overall": 6.5,',
+    '  "task": "English Task Achievement feedback.\\nVietnamese Task Achievement feedback.",',
+    '  "coherence": "English Coherence and Cohesion feedback.\\nVietnamese Coherence and Cohesion feedback.",',
+    '  "lexical": "English Lexical Resource feedback.\\nVietnamese Lexical Resource feedback.",',
+    '  "grammar": "English Grammatical Range and Accuracy feedback.\\nVietnamese Grammatical Range and Accuracy feedback.",',
+    '  "suggestion": "English practical improvement suggestions.\\nVietnamese practical improvement suggestions."',
+    '}',
+    '',
+    'Student: ' + (student.name || ''),
+    'Email: ' + (student.email || ''),
+    '',
+    'Essay:',
+    essay
+  ].join('\n');
+
+  const json = callOpenAIChatJson_(prompt, 0.25);
+
+  return {
+    overall: clampBand_(Number(json.overall || 0)),
+    task: normalizeText_(json.task),
+    coherence: normalizeText_(json.coherence),
+    lexical: normalizeText_(json.lexical),
+    grammar: normalizeText_(json.grammar),
+    suggestion: normalizeText_(json.suggestion)
+  };
+}
+
+function analyzeSpeakingWithGPT_(student, transcript, stats, questions) {
+  const partQuestions = questions
+    .map(function (question, index) {
+      return 'Part ' + (index + 1) + ': ' + (question || '(No question)');
+    })
+    .join('\n');
+
+  const prompt = [
+    'You are an IELTS Speaking examiner.',
+    'Evaluate the candidate based on the Part 1-3 questions, transcript, and word count.',
+    'Include Fluency, Vocabulary, Grammar, Pronunciation, Coherence, Task Relevance.',
+    'Write concise feedback. Include a clear line like "Overall Band: 6.5".',
+    'Write the full feedback in English first, then write the Vietnamese version underneath.',
+    'Use this order only: Overall Band, English Feedback, Vietnamese Feedback.',
+    'Do not use markdown tables. Keep it easy for office consultants to read.',
+    '',
+    'Student: ' + student.name + ' (' + student.email + ')',
+    'Total words: ' + stats.totalWords,
+    'Part 1 words: ' + stats.part1,
+    'Part 2 words: ' + stats.part2,
+    'Part 3 words: ' + stats.part3,
+    '',
+    'Questions:',
+    partQuestions,
+    '',
+    'Transcript:',
+    transcript || '(No response)'
+  ].join('\n');
+
+  return callOpenAIChatText_(prompt, 0.2);
+}
+
+function callOpenAIChatJson_(prompt, temperature) {
+  const text = callOpenAIChatText_(prompt, temperature);
+  const cleaned = text
+    .replace(/```json/gi, '')
+    .replace(/```/g, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+    throw new Error('OpenAI returned invalid JSON: ' + formatCellMessage_(cleaned));
+  }
+}
+
+function callOpenAIChatText_(prompt, temperature) {
+  const response = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + getOpenAIKey_() },
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are an IELTS examiner assistant.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: temperature
+    }),
+    muteHttpExceptions: true
+  });
+
+  const responseText = response.getContentText();
+  const result = JSON.parse(responseText);
+
+  if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+    throw new Error('OpenAI chat error: ' + parseOpenAIError_(responseText));
+  }
+
+  return result.choices[0].message.content || '';
+}
+
+function transcribeAudio_(blob) {
+  const boundary = '----WebKitFormBoundary' + Utilities.getUuid();
+
+  const before = Utilities.newBlob(
+    '--' + boundary + '\r\n' +
+      'Content-Disposition: form-data; name="file"; filename="audio.m4a"\r\n' +
+      'Content-Type: ' + blob.getContentType() + '\r\n\r\n'
+  ).getBytes();
+
+  const after = Utilities.newBlob(
+    '\r\n--' + boundary + '\r\n' +
+      'Content-Disposition: form-data; name="model"\r\n\r\n' +
+      'whisper-1\r\n' +
+      '--' + boundary + '--\r\n'
+  ).getBytes();
+
+  const payload = before.concat(blob.getBytes()).concat(after);
+
+  const response = UrlFetchApp.fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'post',
+    headers: {
+      Authorization: 'Bearer ' + getOpenAIKey_(),
+      'Content-Type': 'multipart/form-data; boundary=' + boundary
+    },
+    payload: payload,
+    muteHttpExceptions: true
+  });
+
+  const responseText = response.getContentText();
+  const result = JSON.parse(responseText);
+
+  if (!result.text) {
+    throw new Error('Whisper error: ' + parseOpenAIError_(responseText));
+  }
+
+  return result;
+}
+
+function setWritingStatus_(sheet, rowNumber, cols, band, feedback, status) {
+  sheet.getRange(rowNumber, cols.band + 1).setValue(band);
+  sheet.getRange(rowNumber, cols.feedback + 1).setValue(feedback);
+  sheet.getRange(rowNumber, cols.status + 1).setValue(status);
+  sheet.getRange(rowNumber, cols.updatedAt + 1).setValue(new Date());
+}
+
+function setSpeakingStatus_(sheet, rowNumber, pdfCol, value) {
+  if (pdfCol === -1 || pdfCol === undefined || pdfCol === null) return;
+  sheet.getRange(rowNumber, pdfCol + 1).setValue(value);
+}
+
+function writeFinalListRecord_(sheet, params) {
+  const headerMap = ensureFinalHeaders_(sheet);
+  const record = findFinalRecord_(sheet, params.id, params.email);
+  const rowNumber = record ? record.rowNumber : sheet.getLastRow() + 1;
+
+  const existingWritingBand = record ? Number(record.writingBand || 0) : 0;
+  const existingSpeakingBand = record ? Number(record.speakingBand || 0) : 0;
+
+  const writingBand = hasValue_(params.writingBand)
+    ? Number(params.writingBand)
+    : existingWritingBand;
+  const speakingBand = hasValue_(params.speakingBand)
+    ? Number(params.speakingBand)
+    : existingSpeakingBand;
+  const overallBand = computeOverallBand_(writingBand, speakingBand);
+
+  if (!record) {
+    sheet.getRange(rowNumber, headerMap.id + 1).setValue(params.id || '');
+    sheet.getRange(rowNumber, headerMap.name + 1).setValue(params.name || '');
+    sheet.getRange(rowNumber, headerMap.email + 1).setValue(params.email || '');
+  } else {
+    if (params.name) sheet.getRange(rowNumber, headerMap.name + 1).setValue(params.name);
+    if (params.email) sheet.getRange(rowNumber, headerMap.email + 1).setValue(params.email);
+  }
+
+  if (overallBand > 0) sheet.getRange(rowNumber, headerMap.score + 1).setValue(overallBand);
+
+  if (params.linkPdf !== undefined) {
+    sheet.getRange(rowNumber, headerMap.linkPdf + 1).setValue(params.linkPdf || '');
+  }
+
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.phone, params.phone);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.consultant, params.consultant);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.ieltsNeed, params.ieltsNeed);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.selfScore, params.selfScore);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.studyTime, params.studyTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.startTime, params.startTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.finishTime, params.finishTime);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.submissionSource, params.source);
+  setFinalMetadataValue_(sheet, rowNumber, headerMap.notes, params.notes);
+
+  if (params.writingBand !== undefined) {
+    sheet.getRange(rowNumber, headerMap.writingBand + 1).setValue(params.writingBand || '');
+  }
+  if (params.writingFeedback !== undefined) {
+    sheet.getRange(rowNumber, headerMap.writingFeedback + 1).setValue(params.writingFeedback || '');
+  }
+  if (params.writingStatus !== undefined) {
+    sheet.getRange(rowNumber, headerMap.writingStatus + 1).setValue(params.writingStatus || '');
+  }
+  if (params.speakingBand !== undefined) {
+    sheet.getRange(rowNumber, headerMap.speakingBand + 1).setValue(params.speakingBand || '');
+  }
+  if (params.speakingPdf !== undefined) {
+    sheet.getRange(rowNumber, headerMap.speakingPdf + 1).setValue(params.speakingPdf || '');
+  }
+
+  if (overallBand > 0) {
+    sheet.getRange(rowNumber, headerMap.overallBand + 1).setValue(overallBand);
+  }
+
+  sheet.getRange(rowNumber, headerMap.lastUpdated + 1).setValue(new Date());
+}
+
+function findFinalRecord_(sheet, studentId, email) {
+  const header = getHeader_(sheet, HEADER_ROW);
+  const idCol = requiredColumn_(header, 'ID', 'Final_list');
+  const nameCol = requiredColumn_(header, 'Name', 'Final_list');
+  const emailCol = requiredColumn_(header, 'Email', 'Final_list');
+  const writingBandCol = findColumnIndex_(header, 'Writing Band');
+  const speakingBandCol = findColumnIndex_(header, 'Speaking Band');
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START_ROW) return null;
+
+  const rows = sheet
+    .getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, sheet.getLastColumn())
+    .getValues();
+
+  const inputId = normalizeText_(studentId);
+  const inputEmail = normalizeText_(email).toLowerCase();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const currentId = normalizeText_(row[idCol]);
+    const currentEmail = normalizeText_(row[emailCol]).toLowerCase();
+
+    if ((inputId && currentId === inputId) || (inputEmail && currentEmail === inputEmail)) {
+      return {
+        rowNumber: DATA_START_ROW + i,
+        id: currentId,
+        name: normalizeText_(row[nameCol]),
+        email: normalizeText_(row[emailCol]),
+        writingBand: writingBandCol !== -1 ? row[writingBandCol] : '',
+        speakingBand: speakingBandCol !== -1 ? row[speakingBandCol] : ''
+      };
+    }
+  }
+
+  return null;
+}
+
+function ensureFinalHeaders_(sheet) {
+  const baseHeaders = ['ID', 'Name', 'Email', 'Score', 'Link PDF'];
+  ensureColumns_(sheet, HEADER_ROW, baseHeaders.concat(FINAL_EXTRA_HEADERS, FINAL_METADATA_HEADERS));
+
+  const header = getHeader_(sheet, HEADER_ROW);
+  return {
+    id: requiredColumn_(header, 'ID', 'Final_list'),
+    name: requiredColumn_(header, 'Name', 'Final_list'),
+    email: requiredColumn_(header, 'Email', 'Final_list'),
+    score: requiredColumn_(header, 'Score', 'Final_list'),
+    linkPdf: requiredColumn_(header, 'Link PDF', 'Final_list'),
+    writingBand: requiredColumn_(header, 'Writing Band', 'Final_list'),
+    writingFeedback: requiredColumn_(header, 'Writing Feedback', 'Final_list'),
+    writingStatus: requiredColumn_(header, 'Writing Status', 'Final_list'),
+    speakingBand: requiredColumn_(header, 'Speaking Band', 'Final_list'),
+    speakingPdf: requiredColumn_(header, 'Speaking PDF', 'Final_list'),
+    overallBand: requiredColumn_(header, 'Overall Band', 'Final_list'),
+    lastUpdated: requiredColumn_(header, 'Last Updated', 'Final_list'),
+    phone: requiredColumn_(header, 'Phone', 'Final_list'),
+    consultant: requiredColumn_(header, 'Consultant', 'Final_list'),
+    ieltsNeed: requiredColumn_(header, 'IELTS Need', 'Final_list'),
+    selfScore: requiredColumn_(header, 'Self Score', 'Final_list'),
+    studyTime: requiredColumn_(header, 'Study Time', 'Final_list'),
+    startTime: requiredColumn_(header, 'Start Time', 'Final_list'),
+    finishTime: requiredColumn_(header, 'Finish Time', 'Final_list'),
+    submissionSource: requiredColumn_(header, 'Submission Source', 'Final_list'),
+    notes: requiredColumn_(header, 'Notes', 'Final_list')
+  };
+}
+
+function ensureWritingOutputColumns_(sheet) {
+  ensureColumns_(sheet, HEADER_ROW, WRITING_OUTPUT_HEADERS);
+  const header = getHeader_(sheet, HEADER_ROW);
+  return {
+    band: requiredColumn_(header, 'Writing AI Band', 'Listening_list'),
+    feedback: requiredColumn_(header, 'Writing AI Feedback', 'Listening_list'),
+    status: requiredColumn_(header, 'Writing AI Status', 'Listening_list'),
+    updatedAt: requiredColumn_(header, 'Writing AI Updated At', 'Listening_list')
+  };
+}
+
+function getListeningColumns_(sheet) {
+  const header = getHeader_(sheet, HEADER_ROW);
+
+  function findOrDefault(labels, fallback) {
+    const index = findFirstColumn_(header, labels);
+    return index !== -1 ? index : fallback;
+  }
+
+  return {
+    id: findOrDefault(['ID'], DEFAULT_LISTENING_COLUMNS.id),
+    startTime: findOrDefault(['Start Time'], DEFAULT_LISTENING_COLUMNS.startTime),
+    finishTime: findOrDefault(['Finish Time'], DEFAULT_LISTENING_COLUMNS.finishTime),
+    name: findOrDefault(['Name', 'Full Name', 'Ho ten'], DEFAULT_LISTENING_COLUMNS.name),
+    phone: findOrDefault(['Phone', 'Phone Number', 'So dien thoai'], DEFAULT_LISTENING_COLUMNS.phone),
+    email: findOrDefault(['Email'], DEFAULT_LISTENING_COLUMNS.email),
+    consultant: findOrDefault(['Consultant', 'Tu van vien'], DEFAULT_LISTENING_COLUMNS.consultant),
+    ieltsNeed: findOrDefault(['IELTS Need', 'Need', 'Nhu cau IELTS'], DEFAULT_LISTENING_COLUMNS.ieltsNeed),
+    selfScore: findOrDefault(['Self Score', 'Self Band', 'Diem tu danh gia'], DEFAULT_LISTENING_COLUMNS.selfScore),
+    studyTime: findOrDefault(['Study Time', 'Time Per Week', 'Thoi gian hoc moi tuan'], DEFAULT_LISTENING_COLUMNS.studyTime),
+    writing: findOrDefault([
+      'Writing Answer',
+      'Writing',
+      'Writing Essay',
+      'Essay',
+      'Bai Writing',
+      'Bai viet'
+    ], DEFAULT_LISTENING_COLUMNS.writing)
+  };
+}
+
+function ensureColumns_(sheet, headerRow, labels) {
+  let header = getHeader_(sheet, headerRow);
+  let lastCol = Math.max(sheet.getLastColumn(), 1);
+  const indexes = {};
+
+  labels.forEach(function (label) {
+    let index = findColumnIndex_(header, label);
+    if (index === -1) {
+      lastCol++;
+      sheet.getRange(headerRow, lastCol).setValue(label);
+      index = lastCol - 1;
+      header[index] = label;
+    }
+    indexes[toKey_(label)] = index;
+  });
+
+  return indexes;
+}
+
+function getSheetByPossibleNames_(ss, names) {
+  for (let i = 0; i < names.length; i++) {
+    const sheet = ss.getSheetByName(names[i]);
+    if (sheet) return sheet;
+  }
+  return null;
+}
+
+function getHeader_(sheet, headerRow) {
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  return sheet
+    .getRange(headerRow, 1, 1, lastCol)
+    .getValues()[0]
+    .map(function (value) {
+      return normalizeText_(value);
+    });
+}
+
+function requiredColumn_(header, columnName, sheetLabel) {
+  const index = findColumnIndex_(header, columnName);
+  if (index === -1) {
+    throw new Error(sheetLabel + ' missing column: ' + columnName);
+  }
+  return index;
+}
+
+function findFirstColumn_(header, labels) {
+  for (let i = 0; i < labels.length; i++) {
+    const index = findColumnIndex_(header, labels[i]);
+    if (index !== -1) return index;
+  }
+  return -1;
+}
+
+function findColumnIndex_(header, columnName) {
+  const target = normalizeHeader_(columnName);
+  return header.findIndex(function (item) {
+    return normalizeHeader_(item) === target;
+  });
+}
+
+function normalizeHeader_(value) {
+  return normalizeText_(value).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function toKey_(label) {
+  return normalizeHeader_(label).replace(/[^a-z0-9]+(.)/g, function (_, chr) {
+    return chr.toUpperCase();
+  });
+}
+
+function isWritingDone_(status) {
+  const text = normalizeText_(status).toUpperCase();
+  return text === 'DONE' || text.indexOf('DONE') === 0;
+}
+
+function isAlreadyEvaluated_(value) {
+  const text = normalizeText_(value).toLowerCase();
+  return text.indexOf('drive.google.com') !== -1 || text.indexOf('docs.google.com') !== -1;
+}
+
+function formatWritingFeedback_(result) {
+  return [
+    'Task: ' + result.task,
+    'Coherence: ' + result.coherence,
+    'Lexical: ' + result.lexical,
+    'Grammar: ' + result.grammar,
+    'Suggestion: ' + result.suggestion
+  ].join('\n');
+}
+
+function computeOverallBand_(writingBand, speakingBand) {
+  const bands = [Number(writingBand || 0), Number(speakingBand || 0)]
+    .filter(function (band) {
+      return band > 0;
+    });
+
+  if (bands.length === 0) return 0;
+
+  const average = bands.reduce(function (sum, band) {
+    return sum + band;
+  }, 0) / bands.length;
+
+  return Math.round(average * 2) / 2;
+}
+
+function extractOverallBand_(analysis) {
+  const text = normalizeText_(analysis);
+  const patterns = [
+    /overall\s*band\s*[:ï¼š]?\s*(\d+(?:\.\d+)?)/i,
+    /overall\s*[:ï¼š]?\s*(\d+(?:\.\d+)?)\s*\/\s*9/i,
+    /band\s*[:ï¼š]?\s*(\d+(?:\.\d+)?)/i,
+    /(\d+(?:\.\d+)?)\s*\/\s*9/
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+    if (match) return clampBand_(Number(match[1]));
+  }
+
+  return 0;
+}
+
+function clampBand_(value) {
+  if (isNaN(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 9) return 9;
+  return Math.round(value * 2) / 2;
+}
+
+function countWords_(text) {
+  return normalizeText_(text)
+    .split(/\s+/)
+    .filter(function (word) {
+      return /\w+/.test(word);
+    }).length;
+}
+
+function hasValue_(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function formatCellMessage_(text) {
+  const clean = normalizeText_(text);
+  return clean.length > 250 ? clean.substring(0, 247) + '...' : clean;
+}
+
+function normalizeText_(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function getOpenAIKeyFromConfigSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+  if (!sheet) return { key: '', source: '' };
+
+  const b1 = normalizeText_(sheet.getRange('B1').getValue()).replace(/^["']|["']$/g, '');
+  if (b1.indexOf('sk-') === 0) {
+    return { key: b1, source: 'Config!B1' };
+  }
+
+  return { key: '', source: '' };
+}
+
+function getOpenAIKey_() {
+  const fromSheet = getOpenAIKeyFromConfigSheet_();
+  if (fromSheet.key) return fromSheet.key;
+
+  const raw = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY') || '';
+  const key = raw.trim().replace(/^["']|["']$/g, '');
+
+  if (!key) return '';
+  if (key.indexOf('sk-') === 0 && key.length < 80) {
+    throw new Error('OPENAI_API_KEY is too short. Put the full key in Config!B1.');
+  }
+
+  return key;
+}
+
+function validateOpenAIKey_() {
+  const key = getOpenAIKey_();
+  if (!key) {
+    throw new Error('Missing OPENAI_API_KEY. Put the full key in Config!B1 or Script Properties.');
+  }
+
+  const res = UrlFetchApp.fetch('https://api.openai.com/v1/models', {
+    headers: { Authorization: 'Bearer ' + key },
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() === 401) {
+    throw new Error('OpenAI rejected the API key. Re-copy the full key into Config!B1.');
+  }
+
+  if (res.getResponseCode() >= 400) {
+    throw new Error('Cannot connect to OpenAI. HTTP ' + res.getResponseCode());
+  }
+}
+
+function parseOpenAIError_(responseText) {
+  try {
+    const json = JSON.parse(responseText);
+    const err = json.error || {};
+    if (err.code === 'invalid_api_key') return 'Invalid OPENAI_API_KEY.';
+    if (err.message) return String(err.message);
+  } catch (err) {
+    // ignore
+  }
+  return formatCellMessage_(responseText);
+}
+
+function testOpenAIKey() {
+  validateOpenAIKey_();
+  SpreadsheetApp.getUi().alert('OpenAI key is valid.');
+}
+
+function getAdminEmails_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+
+  if (configSheet) {
+    const lastRow = configSheet.getLastRow();
+    if (lastRow >= 2) {
+      const values = configSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      const fromSheet = values
+        .map(function (row) {
+          return normalizeText_(row[0]);
+        })
+        .filter(function (email) {
+          return email && email.indexOf('@') !== -1;
+        });
+
+      if (fromSheet.length > 0) return fromSheet;
+    }
+  }
+
+  const prop = PropertiesService.getScriptProperties().getProperty('ADMIN_EMAILS') || '';
+  return prop
+    .split(',')
+    .map(function (email) {
+      return normalizeText_(email);
+    })
+    .filter(function (email) {
+      return email && email.indexOf('@') !== -1;
+    });
+}
+
+function testAdminEmail() {
+  const adminEmails = getAdminEmails_();
+  if (adminEmails.length === 0) {
+    SpreadsheetApp.getUi().alert('No admin emails configured in Config A2:A or ADMIN_EMAILS.');
+    return;
+  }
+
+  MailApp.sendEmail({
+    to: adminEmails.join(','),
+    subject: '[Test] WeWIN IELTS admin email OK',
+    htmlBody: '<p>Admin email is working.</p><p>Recipients: <b>' + escapeHtml_(adminEmails.join(', ')) + '</b></p>',
+    name: 'WeWIN IELTS Analyzer'
+  });
+
+  SpreadsheetApp.getUi().alert('Test email sent to:\n' + adminEmails.join('\n'));
+}
+
+function sendAdminReportEmail_(params) {
+  if (!params.adminEmails || params.adminEmails.length === 0) return;
+
+  const htmlBody = [
+    '<div style="font-family:Arial,sans-serif;color:#1a1a1a">',
+    '<h2 style="color:#0E4BA9">IELTS AI Assessment Report</h2>',
+    '<p><b>Student:</b> ' + escapeHtml_(params.studentName) + '</p>',
+    '<p><b>Email:</b> ' + escapeHtml_(params.studentEmail) + '</p>',
+    params.writingBand ? '<p><b>Writing Band:</b> ' + escapeHtml_(params.writingBand) + '</p>' : '',
+    params.speakingBand ? '<p><b>Speaking Band:</b> ' + escapeHtml_(params.speakingBand) + '</p>' : '',
+    params.pdfLink ? '<p><b>Speaking PDF:</b> <a href="' + escapeHtml_(params.pdfLink) + '">' + escapeHtml_(params.pdfLink) + '</a></p>' : '',
+    '<p>PDF Speaking report is attached.</p>',
+    '<p style="color:#888;font-size:12px">WeWIN IELTS Analyzer - ' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm') +
+      '</p></div>'
+  ].join('');
+
+  MailApp.sendEmail({
+    to: params.adminEmails.join(','),
+    subject: '[Admin] IELTS AI Report - ' + params.studentName,
+    htmlBody: htmlBody,
+    attachments: [params.pdfBlob.setName(params.pdfFileName)],
+    name: 'WeWIN IELTS Analyzer'
+  });
+}
+
+function sendAdminErrorEmail_(adminEmails, studentName, studentEmail, errorMessage) {
+  if (!adminEmails || adminEmails.length === 0) return;
+
+  MailApp.sendEmail({
+    to: adminEmails.join(','),
+    subject: '[Admin] IELTS Evaluate ERROR - ' + studentName,
+    htmlBody: [
+      '<p>Evaluation failed for <b>' + escapeHtml_(studentName) + '</b> (' + escapeHtml_(studentEmail) + ').</p>',
+      '<p style="color:#c00">' + escapeHtml_(formatCellMessage_(errorMessage)) + '</p>'
+    ].join(''),
+    name: 'WeWIN IELTS Analyzer'
+  });
+}
+
+function createSpeakingPdfReport_(data) {
+  const docName = 'IELTS_Speaking_' + data.name.replace(/[^\w\s-]/g, '') + '_' + Date.now();
+  const doc = DocumentApp.create(docName);
+  const body = doc.getBody();
+  body.clear();
+
+  const title = body.appendParagraph('IELTS SPEAKING');
+  title.setHeading(DocumentApp.ParagraphHeading.TITLE);
+  title.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(22);
+
+  const subtitle = body.appendParagraph('Assessment Report');
+  subtitle.editAsText().setForegroundColor('#0E4BA9').setFontSize(13);
+  body.appendParagraph('');
+
+  appendSectionHeader_(body, 'Candidate Information');
+  appendInfoRow_(body, 'Full Name', data.name);
+  appendInfoRow_(body, 'Email Address', data.email);
+  appendInfoRow_(
+    body,
+    'Test Date',
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMMM yyyy')
+  );
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Performance Summary');
+  const statsLine = body.appendParagraph(
+    'TOTAL WORDS: ' + data.stats.totalWords +
+      ' | Part 1: ' + data.stats.part1 +
+      ' | Part 2: ' + data.stats.part2 +
+      ' | Part 3: ' + data.stats.part3
+  );
+  statsLine.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(11);
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Full Transcript');
+  appendTranscriptPart_(body, '1', 'Introduction and Interview', data.transcriptsByPart.part1);
+  appendTranscriptPart_(body, '2', 'Individual Long Turn', data.transcriptsByPart.part2);
+  appendTranscriptPart_(body, '3', 'Two-way Discussion', data.transcriptsByPart.part3);
+
+  body.appendParagraph('');
+  appendSectionHeader_(body, 'Examiner Feedback and Assessment');
+  body.appendParagraph(data.analysis || '(No feedback)').editAsText().setFontSize(10);
+
+  body.appendParagraph('');
+  const footer = body.appendParagraph(
+    'WeWIN IELTS Analyzer - Report generated: ' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy')
+  );
+  footer.editAsText().setForegroundColor('#888888').setFontSize(9);
+
+  doc.saveAndClose();
+
+  const docFile = DriveApp.getFileById(doc.getId());
+  const pdfBlob = docFile.getAs(MimeType.PDF);
+  pdfBlob.setName('IELTS_Speaking_Report_' + data.name.replace(/[^\w\s-]/g, '') + '.pdf');
+
+  const folder = getPdfFolder_();
+  const pdfFile = folder.createFile(pdfBlob);
+  docFile.setTrashed(true);
+
+  return pdfFile;
+}
+
+function getPdfFolder_() {
+  const folderId = getPdfFolderId_();
+  if (folderId) {
+    try {
+      return DriveApp.getFolderById(folderId);
+    } catch (err) {
+      Logger.log('Invalid PDF_DRIVE_FOLDER_ID: ' + folderId + '. Using Drive root.');
+    }
+  }
+  return DriveApp.getRootFolder();
+}
+
+function getPdfFolderId_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('PDF_DRIVE_FOLDER_ID') || '';
+  return extractDriveFolderId_(raw.trim());
+}
+
+function extractDriveFolderId_(value) {
+  const text = normalizeText_(value);
+  if (!text) return '';
+
+  if (text.indexOf('drive.google.com') !== -1) {
+    const match = text.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+    const match2 = text.match(/id=([a-zA-Z0-9_-]+)/);
+    if (match2) return match2[1];
+  }
+
+  return text;
+}
+
+function appendSectionHeader_(body, title) {
+  const paragraph = body.appendParagraph(title.toUpperCase());
+  paragraph.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(11);
+  body.appendHorizontalRule();
+}
+
+function appendInfoRow_(body, label, value) {
+  body.appendParagraph(label + ': ' + (value || '')).editAsText().setFontSize(10);
+}
+
+function appendTranscriptPart_(body, partNum, partTitle, text) {
+  const header = body.appendParagraph('Part ' + partNum + ': ' + partTitle);
+  header.editAsText().setForegroundColor('#0E4BA9').setBold(true).setFontSize(10);
+  body.appendParagraph(text || 'No transcript available.').editAsText().setFontSize(9);
+  body.appendParagraph('');
+}
+
+function extractFileId_(url) {
+  const text = normalizeText_(url);
+  if (!text) return null;
+  if (text.indexOf('id=') !== -1) return text.split('id=')[1].split('&')[0];
+  if (text.indexOf('/d/') !== -1) return text.split('/d/')[1].split('/')[0];
+  return null;
+}
+
+function setAudioType_(file) {
+  const blob = file.getBlob();
+  const name = file.getName().toLowerCase();
+
+  if (name.endsWith('.mp3')) return blob.setContentType('audio/mpeg');
+  if (name.endsWith('.m4a') || name.endsWith('.mp4')) return blob.setContentType('audio/mp4');
+  if (name.endsWith('.wav')) return blob.setContentType('audio/wav');
+  if (name.endsWith('.ogg')) return blob.setContentType('audio/ogg');
+  if (name.endsWith('.webm')) return blob.setContentType('audio/webm');
+
+  return blob.setContentType('audio/mp4');
+}
+
+function escapeHtml_(value) {
+  return normalizeText_(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function htmlText_(value) {
+  return escapeHtml_(value).replace(/\r?\n/g, '<br>');
+}
+

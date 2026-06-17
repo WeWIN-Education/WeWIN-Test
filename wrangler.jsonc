@@ -1,0 +1,7 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "wewin-ielts",
+    "main": ".open-next/worker.js",
+    "compatibility_date": "2026-06-13",
+    "compatibility_flags": ["nodejs_compat"]
+  }
