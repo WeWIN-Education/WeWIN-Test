@@ -146,9 +146,6 @@ function Logo() {
         priority
         className="h-auto w-36 drop-shadow-md sm:w-48"
       />
-      <span className="hidden truncate text-2xl font-extrabold tracking-wide text-[#E4C28E] drop-shadow sm:block">
-        WeWIN IELTS
-      </span>
     </Link>
   );
 }
