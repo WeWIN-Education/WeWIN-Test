@@ -5,6 +5,7 @@ export const Routes = {
   TEST_CAMBRIDGE: "/test/cambridge",
   RESOURCES_LISTS: "/resources",
   MANAGE_CLASS: "/class",
+  MANAGE_CAMBRIDGE: "/class/cambridge",
   MANAGE_CLASS_CATEGORY: "/class/category",
   MANAGE_STUDENT: "/student",
 };

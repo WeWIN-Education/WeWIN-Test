@@ -1,6 +1,17 @@
 export const DEFAULT_APPS_SCRIPT_WEB_APP_URL =
   "https://script.google.com/macros/s/AKfycbzYBClvgQRh3fDnS6j5oqubYieaML7lYeuU9z4DAAciYr8rpKKfjLKBH7W1yYGQ2ePA/exec";
 
+type AppsScriptResponse = {
+  success?: boolean;
+  error?: string;
+  uuid?: string;
+  id?: string;
+  row?: number;
+  score?: string | number;
+  status?: string;
+  [key: string]: unknown;
+};
+
 export function getAppsScriptWebAppUrl(): string {
   return (
     process.env.GOOGLE_APPS_SCRIPT_WEB_APP_URL ||
@@ -35,16 +46,57 @@ export async function submitIeltsToAppsScript(params: {
   });
 
   const text = await res.text();
-  let json: any;
+  let json: AppsScriptResponse;
 
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(text) as AppsScriptResponse;
   } catch {
     throw new Error(`Apps Script returned non-JSON response: ${text}`);
   }
 
   if (!res.ok || json?.success === false) {
     throw new Error(json?.error || "Apps Script submission failed.");
+  }
+
+  return json;
+}
+
+export async function submitCambridgeSpeakingToAppsScript(params: {
+  sheetId: string;
+  id?: string;
+  data: Record<string, unknown>;
+}) {
+  const url = getAppsScriptWebAppUrl();
+
+  if (!url) {
+    throw new Error(
+      "Missing GOOGLE_APPS_SCRIPT_WEB_APP_URL. Deploy the Sheet Apps Script as a Web App and add the URL to .env.local."
+    );
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "submitCambridgeSpeaking",
+      secret: process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_SECRET || "",
+      sheetId: params.sheetId,
+      id: params.id,
+      data: params.data,
+    }),
+  });
+
+  const text = await res.text();
+  let json: AppsScriptResponse;
+
+  try {
+    json = JSON.parse(text) as AppsScriptResponse;
+  } catch {
+    throw new Error(`Apps Script returned non-JSON response: ${text}`);
+  }
+
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.error || "Apps Script Cambridge submission failed.");
   }
 
   return json;

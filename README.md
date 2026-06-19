@@ -1,6 +1,6 @@
 # WeWIN IELTS
 
-Next.js app for IELTS placement tests. The web app collects Listening, Reading, Writing, and Speaking answers, writes results to Google Sheets through Google OAuth or Apps Script fallback, and sends an admin email report.
+Next.js app for IELTS and Cambridge placement tests. The web app writes results to Google Sheets through Google OAuth or the preferred Apps Script flow, and sends admin email reports.
 
 ## Requirements
 
@@ -129,6 +129,47 @@ Deploy Apps Script as a Web App, copy the `/exec` URL, and set it in:
 ```text
 GOOGLE_APPS_SCRIPT_WEB_APP_URL
 NEXT_PUBLIC_GOOGLE_APPS_SCRIPT_WEB_APP_URL
+```
+
+Apps Script actions used by the web app:
+
+```text
+submitIelts
+getFinalList
+submitCambridgeSpeaking
+getCambridgeSpeaking
+```
+
+After pasting `Codeappscript.txt`, reload the Sheet and use:
+
+```text
+IELTS Evaluate -> Setup Cambridge Speaking sheet
+```
+
+This creates/formats `Speaking_Cambridge` headers if the tab is missing.
+
+## Cambridge Speaking
+
+Student route:
+
+```text
+/test/cambridge
+```
+
+Admin route:
+
+```text
+/class/cambridge
+```
+
+The Cambridge test collects basic student information, lets the student choose `Starters`, `Movers`, `Flyers`, or `KET`, randomly orders two prompts from `app/constants/cambridge.ts`, records two audio answers, and submits the result through `/api/submit-cambridge-speaking`.
+
+The AI scoring is a Cambridge-style placement estimate, not an official certificate score. The rubric maps `Starters` to Pre A1, `Movers` to A1, and `Flyers`/`KET` to A2-style readiness. The 0-5 score considers task completion, pronunciation/intelligibility, fluency/confidence, language control for the selected level, and readiness for the next class level.
+
+Apps Script writes Cambridge results to `Speaking_Cambridge` with row-2 headers:
+
+```text
+ID, Submit Time, Name, Birth Date, Location, Phone, Email, Consultant, Level, Prompt 1, Audio Link 1, Transcript 1, Prompt 2, Audio Link 2, Transcript 2, Score, Level Fit, English Feedback, Vietnamese Feedback, Recommendation, Status, Last Updated
 ```
 
 ## Scripts

@@ -1,10 +1,7 @@
 import { Suspense } from "react";
-import { isGoogleAuthConfigured } from "../lib/googleAuth";
 import LoginForm from "./LoginForm";
 
 export default function LoginPage() {
-  const googleConfigured = isGoogleAuthConfigured();
-
   return (
     <Suspense
       fallback={
@@ -13,7 +10,7 @@ export default function LoginPage() {
         </div>
       }
     >
-      <LoginForm googleConfigured={googleConfigured} />
+      <LoginForm />
     </Suspense>
   );
 }

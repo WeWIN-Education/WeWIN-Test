@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   ClipboardList,
   GraduationCap,
+  Mic,
   PanelLeftClose,
   PanelLeftOpen,
   Users,
@@ -44,6 +45,13 @@ export default function Sidebar() {
           label="IELTS Results"
           icon={<ClipboardList className="h-4 w-4" />}
           active={isActive(Routes.MANAGE_CLASS)}
+          collapsed={collapsed}
+        />
+        <SidebarLink
+          href={Routes.MANAGE_CAMBRIDGE}
+          label="Cambridge Results"
+          icon={<Mic className="h-4 w-4" />}
+          active={isActive(Routes.MANAGE_CAMBRIDGE)}
           collapsed={collapsed}
         />
         <SidebarLink

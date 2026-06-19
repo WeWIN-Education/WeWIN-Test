@@ -121,6 +121,7 @@ The app expects these tab names:
 
 ```text
 Speaking_list
+Speaking_Cambridge
 Listening_list
 Final_list
 Answers
@@ -141,9 +142,82 @@ Grammar_list   gid 973744913, hidden
 Important writes:
 
 - `Speaking_list`: `/api/log-to-sheet` or Apps Script `doPost` writes exactly A:J.
+- `Speaking_Cambridge`: `/api/submit-cambridge-speaking` calls Apps Script `submitCambridgeSpeaking`, which writes A:V and returns results for `/class/cambridge`.
 - `Listening_list`: `/api/submit-ielts` or Apps Script `doPost` writes exactly A:AR.
 - `Final_list`: `/api/submit-ielts` or Apps Script `doPost` writes A:U. Columns A:L stay compatible with AI scoring; M:U store student/contact metadata.
 - `Answers`: `/api/submit-ielts` reads answer keys from here to score Listening/Reading.
+
+## Cambridge Speaking Flow
+
+Student route:
+
+```text
+/test/cambridge
+```
+
+Admin route:
+
+```text
+/class/cambridge
+```
+
+API routes:
+
+```text
+/api/submit-cambridge-speaking
+/api/admin/cambridge-speaking
+```
+
+Cambridge levels and prompts are stored in:
+
+```text
+app/constants/cambridge.ts
+```
+
+Current prompt bank:
+
+```text
+Starters:
+- I have a brother and a sister.
+- I like playing football with my friends.
+
+Movers:
+- There is a big playground near my school, and I often play there after class.
+- Yesterday, I helped my mother make dinner and set the table.
+
+Flyers:
+- When I have free time, I enjoy reading books because they help me learn new things.
+- Last summer, my family travelled to the beach, and we spent several days swimming and taking photos.
+
+KET:
+- I have recently joined an English club, and it has helped me improve my communication skills.
+- Although I was nervous at first, I felt much more confident after speaking in front of my class.
+```
+
+`Speaking_Cambridge` headers must be on row 2:
+
+```text
+ID, Submit Time, Name, Birth Date, Location, Phone, Email, Consultant, Level, Prompt 1, Audio Link 1, Transcript 1, Prompt 2, Audio Link 2, Transcript 2, Score, Level Fit, English Feedback, Vietnamese Feedback, Recommendation, Status, Last Updated
+```
+
+Apps Script creates the tab if it is missing, saves two audio files to Drive, transcribes with Whisper, scores with OpenAI on a 0-5 scale, sends an admin email, and exposes dashboard rows through `getCambridgeSpeaking`.
+
+The Apps Script menu also includes:
+
+```text
+IELTS Evaluate -> Setup Cambridge Speaking sheet
+```
+
+Use this once after pasting the latest `Codeappscript.txt` to create/format the `Speaking_Cambridge` header row.
+
+Cambridge scoring is a placement estimate, not an official Cambridge certificate result:
+
+- Starters maps to Pre A1 readiness.
+- Movers maps to A1 readiness.
+- Flyers maps to A2 young learner readiness.
+- KET maps to A2 Key readiness.
+- Score is 0-5 based on task completion, pronunciation/intelligibility, fluency/confidence, language control for the selected level, and readiness for the next WeWIN class level.
+- `Level Fit` should guide office consultation, for example `Below Flyers`, `Developing within Flyers`, `Ready for Flyers`, or `Consider next level: KET`.
 
 ## Expected Listening_list Order From Web
 
@@ -405,7 +479,18 @@ IELTS Test
 Cambridge Test
 ```
 
-`/test/cambridge` is currently a placeholder page for the upcoming Cambridge test flow.
+`/test/cambridge` is now a Cambridge Speaking flow with student info, level selection, two randomized prompts, browser audio recording, Apps Script submit, and admin email.
+
+The admin route `/class/cambridge` loads Cambridge Speaking rows from `Speaking_Cambridge` through:
+
+```text
+GET /api/admin/cambridge-speaking
+```
+
+Read strategy:
+
+- Google admin session: read `Speaking_Cambridge!A2:V` directly with the Google access token.
+- Email/password admin session: call Apps Script Web App action `getCambridgeSpeaking`.
 
 ## Current Known Gaps
 

@@ -3,6 +3,7 @@ export const IELTS_SHEET_ID = "1g4ONkJOpxbUVTIPnpDXbVSB6K75z44f_GLNymTp6Zwo";
 
 export const SHEET_TABS = {
   SPEAKING: "Speaking_list",
+  CAMBRIDGE_SPEAKING: "Speaking_Cambridge",
   LISTENING: "Listening_list",
   FINAL: "Final_list",
   ANSWERS: "Answers",
